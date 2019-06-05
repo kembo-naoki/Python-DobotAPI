@@ -189,7 +189,7 @@ class DobotAPI():
         Returns
         -------
         pose : dict of {str: float}
-            "x","y","z","ang"
+            "x"(mm), "y"(mm), "z"(mm), "ang"(degree)
         """
         pose = Pose()
         self.__send_cmd(self.api.GetPose, byref(pose))
@@ -202,7 +202,14 @@ class DobotAPI():
         cmd.temp = 0
         return self.__queue_cmd(self.api.SetHOMECmd, byref(cmd))
     def ptp(self, pos):
-        """ アームの特定座標への移動 """
+        """
+        アームの特定座標への移動
+
+        Parameters
+        ----------
+        pos : dict of {str: float}
+            "x"(mm), "y"(mm), "z"(mm), "ang"(degree)
+        """
         cmd = PTPCmd()
         cmd.ptpMode = DobotAPI.PTP_MODE
         cmd.x = pos["x"]
