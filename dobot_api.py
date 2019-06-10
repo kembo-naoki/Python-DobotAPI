@@ -337,36 +337,105 @@ class DobotAPI():
         self.stop_flg = False
     
     # 外部IO
-    IO_MODES_LIST = (
-        "Invalid",
-        "Level_Output",
-        "PWM_Output",
-        "Level_Input",
-        "A/D_Input",
-        "Pull-up_Input",
-        "Pull-down_Input"
-    )
-    class _IO_Mode(Enum):
-        Invalid = 0
-        LevelOutput = 1
-        PWM_Output = 2
-        Level_Input = 3
-        AD_Input = 4
-        Pullup_Input = 5
-        Pulldown_Input = 6
-    def config_io(self, address, mode):
-        """ 特定の I/O ポートのモード設定 """
-        if not mode in DobotAPI.IO_MODES_LIST:
-            raise ValueError("mode is invalid.")
+    class IOMode(Enum):
+        INVALID = 0
+        LEVEL_OUTPUT = 1
+        PWM_OUTPUT = 2
+        LEVEL_INPUT = 3
+        AD_INPUT = 4
+        # PULLUP_INPUT = 5
+        # PULLDOWN_INPUT = 6
+    class Pin(object):
+        def __init__(self, address, volt, permission=[]):
+            """
+            Parameters
+            ----------
+            address : int
+            volt : float
+            permission : list of IOMode
+            """
+            self.address = address
+            self.volt = volt
+            self.permission = set([DobotAPI.IOMode.INVALID]+list(permission))
+            self.mode = None
+        def set_mode(self, mode):
+            self.mode = mode
+    class Interface(object):
+        def __init__(self, *pins):
+            """
+            Parameters
+            ----------
+            label : str
+            pins : (int, str, DobotAPI._Interface._Pin)
+            """
+            self.pins = {}
+            for pin in pins:
+                self.pins[pin[0]] = pin[2]
+                self.pins[pin[1]] = pin[2]
+    _LvOut = IOMode.LEVEL_OUTPUT
+    _LvIn  = IOMode.LEVEL_INPUT
+    _PWM = IOMode.PWM_OUTPUT
+    _ADC = IOMode.AD_INPUT
+    _heat_12v = Pin(3, 12, [_LvOut])
+    Interfaces = {
+        "base": {
+            "UART": Interface( (3, "E2",       Pin(18, 3.3, [_LvOut])),
+                                (7, "STOP_KEY", Pin(20, 3.3, [_LvIn ])),
+                                (8, "E1",       Pin(19, 3.3, [_LvIn ])) ),
+
+            "GP1" : Interface( (1, "REV", Pin(10, 5.0, [_LvOut      ])),
+                                (2, "PWM", Pin(11, 3.3, [_LvOut, _PWM])),
+                                (3, "ADC", Pin(12, 3.3, [_LvIn       ])) ),
+            "GP2" : Interface( (1, "REV", Pin(13, 5.0, [_LvOut])),
+                                (2, "PWM", Pin(14, 3.3, [_LvOut, _LvIn, _PWM])),
+                                (3, "ADC", Pin(15, 3.3, [_LvOut, _LvIn, _ADC])) ),
+            "SW1" : Interface( (1, "VALVE", Pin(16, 12, [_LvOut]))),
+            "SW2" : Interface( (1, "PUMP" , Pin(16, 12, [_LvOut])))
+        },
+        "arm": {
+            "GP3": Interface( (2, "PWM", Pin(8, 3.3, [_LvOut, _PWM       ])),
+                               (3, "ADC", Pin(9, 3.3, [_LvOut, _LvIn, _ADC])) ),
+            "GP4": Interface( (2, "PWM", Pin(6, 3.3, [_LvOut, _PWM])),
+                               (3, "ADC", Pin(7, 3.3, [_LvIn       ])) ),
+            "GP5": Interface( (2, "PWM", Pin(4, 3.3, [_LvOut, _PWM])),
+                               (3, "ADC", Pin(5, 3.3, [_LvIn       ])) ),
+            "SW3": Interface( (2, "HEAT_12V", _heat_12v), (3, "HEAT_12V", _heat_12v) ),
+
+            "SW4":    Interface( (1, "FAN_12V", Pin(2, 12, [_LvOut])) ),
+            "ANALOG": Interface( (1, "Temp", Pin(1, 3.3, [_LvOut, _LvIn, _ADC])) )
+        }
+    }
+    def config_io(self, pin, mode):
+        """
+        特定の I/O ポートのモード設定
+
+        Parameters
+        ----------
+        pin : DobotAPI.Pin
+        mode : DobotAPI.IOMode
+        """
         cmd = TagIOMultiplexing()
-        cmd.address = address
-        cmd.mode = DobotAPI.IO_MODES_LIST.index(mode)
-        return self.__queue_cmd(self.api.SetIOMultiplexing, byref(cmd))
-    def set_io(self, address, level):
-        """ 特定の I/O ポートの出力設定 """
+        cmd.address = pin.address
+        cmd.mode = mode.value
+        result = self.__queue_cmd(self.api.SetIOMultiplexing, byref(cmd))
+        pin.set_mode(mode)
+        return result
+    # Level I/O
+    class Level(Enum):
+        LOW = 0
+        HIGH = 1
+    def level_out(self, pin, level):
+        """
+        特定の I/O ポートの出力設定
+
+        Parameters
+        ----------
+        pin : DobotAPI.Pin
+        mode : DobotAPI.Level
+        """
         cmd = TagIODO()
-        cmd.address = address
-        cmd.level   = level
+        cmd.address = pin.address
+        cmd.level   = level.value
         return self.__queue_cmd(self.api.SetIODO, byref(cmd))
 
 
