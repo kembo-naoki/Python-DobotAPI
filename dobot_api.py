@@ -1,4 +1,4 @@
-from enum   import Enum
+from enum   import (Enum, auto)
 from time   import sleep
 from os     import path
 from ctypes import (cdll, create_string_buffer, Structure, byref,
@@ -214,8 +214,14 @@ class DobotAPI():
         MOVL_INC   = 7
         MOVJ_XYZ_INC = 8
         JUMP_MOVL_XYZ= 9
-    def ptp_xyz(self, x, y, z, r, linear=False, inc=False):
+    class RouteMode(Enum):
+        REGARDLESS  = auto()
+        RECTILINEAR = auto()
+        JUMP = auto()
+    def ptp_xyz(self, x, y, z, r, mode=DobotAPI.RouteMode.REGARDLESS, inc=False):
         """
+        直交座標系で動かす。
+
         Parameters
         ----------
         x : float
@@ -226,8 +232,7 @@ class DobotAPI():
             上方を正とする座標軸。
         r : float
             上から見て反時計回りを正とするエンドエフェクタの角度。単位は度数法。
-        linear : bool
-            True の時エンドエフェクタが必ず直線の経路を取るように動かす。
+        mode : DobotAPI.RouteMode
         inc : bool
             True の時与えられた座標を現在位置からの相対座標として計算する。
     
@@ -235,18 +240,51 @@ class DobotAPI():
         -------
         cmd_index : int
         """
-        mode = None
-        if linear:
-            if inc:
-                mode = self._PTP_MODE.MOVL_INC
-            else:
-                mode = self._PTP_MODE.MOVL_XYZ
-        else:
-            if inc:
-                mode = self._PTP_MODE.MOVJ_INC
-            else:
-                mode = self._PTP_MODE.MOVJ_XYZ
+        if mode is DobotAPI.RouteMode.REGARDLESS:
+            if inc : mode = DobotAPI._PTP_MODE.MOVJ_XYZ_INC
+            else   : mode = DobotAPI._PTP_MODE.MOVJ_XYZ
+        elif mode is DobotAPI.RouteMode.RECTILINEAR:
+            if inc : mode = DobotAPI._PTP_MODE.MOVL_INC
+            else   : mode = DobotAPI._PTP_MODE.MOVL_XYZ
+        elif mode is DobotAPI.RouteMode.JUMP:
+            if inc : mode = DobotAPI._PTP_MODE.JUMP_MOVL_XYZ
+            else   : mode = DobotAPI._PTP_MODE.JUMP_XYZ
+        else : raise TypeError("mode is invalid("+str(mode)+")")
         pos = {"x": x, "y": y, "z": z, "r": r}
+        return self._send_ptp_cmd(pos, mode)
+    def ptp_joint(self, j1, j2, j3, j4, mode=DobotAPI.RouteMode.REGARDLESS, inc=False):
+        """
+        サーボモーター単位で動かす。
+
+        Parameters
+        ----------
+        j1 : float
+            アーム根本、上から見て反時計回りを正とする角度。単位は度数法。
+        j2 : float
+            肩の関節、右から見て反時計回りを正とする角度。
+        j3 : float
+            肘の関節、右から見て反時計回りを正とする角度。
+        j4 : float
+            上から見て反時計回りを正とするエンドエフェクタの角度。
+        mode : DobotAPI.RouteMode
+        inc : bool
+            True の時与えられた座標を現在位置からの相対座標として計算する。
+    
+        Returns
+        -------
+        cmd_index : int
+        """
+        if mode is DobotAPI.RouteMode.REGARDLESS:
+            if inc : mode = DobotAPI._PTP_MODE.MOVJ_INC
+            else   : mode = DobotAPI._PTP_MODE.MOVJ_ANGLE
+        elif mode is DobotAPI.RouteMode.RECTILINEAR:
+            if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
+            else   : mode = DobotAPI._PTP_MODE.MOVL_ANGLE
+        elif mode is DobotAPI.RouteMode.JUMP:
+            if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
+            else   : mode = DobotAPI._PTP_MODE.JUMP_ANGLE
+        else : raise TypeError("mode is invalid("+str(mode)+")")
+        pos = {"x": j1, "y": j2, "z": j3, "r": j4}
         return self._send_ptp_cmd(pos, mode)
     def _send_ptp_cmd(self, pos, mode):
         """
@@ -308,6 +346,14 @@ class DobotAPI():
         "Pull-up_Input",
         "Pull-down_Input"
     )
+    class _IO_Mode(Enum):
+        Invalid = 0
+        LevelOutput = 1
+        PWM_Output = 2
+        Level_Input = 3
+        AD_Input = 4
+        Pullup_Input = 5
+        Pulldown_Input = 6
     def config_io(self, address, mode):
         """ 特定の I/O ポートのモード設定 """
         if not mode in DobotAPI.IO_MODES_LIST:
