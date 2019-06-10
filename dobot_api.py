@@ -1,3 +1,4 @@
+from enum   import Enum
 from time   import sleep
 from os     import path
 from ctypes import (cdll, create_string_buffer, Structure, byref,
@@ -201,6 +202,18 @@ class DobotAPI():
         cmd = HOMECmd()
         cmd.temp = 0
         return self.__queue_cmd(self.api.SetHOMECmd, byref(cmd))
+
+    class _PTP_MODE(Enum):
+        JUMP_XYZ   = 0
+        MOVJ_XYZ   = 1
+        MOVL_XYZ   = 2
+        JUMP_ANGLE = 3
+        MOVJ_ANGLE = 4
+        MOVL_ANGLE = 5
+        MOVJ_INC   = 6
+        MOVL_INC   = 7
+        MOVJ_XYZ_INC = 8
+        JUMP_MOVL_XYZ= 9
     def ptp(self, pos):
         """
         アームの特定座標への移動
