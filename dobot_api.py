@@ -214,21 +214,53 @@ class DobotAPI():
         MOVL_INC   = 7
         MOVJ_XYZ_INC = 8
         JUMP_MOVL_XYZ= 9
-    def ptp(self, pos):
+    def ptp_xyz(self, x, y, z, r, linear=False, inc=False):
         """
-        アームの特定座標への移動
-
         Parameters
         ----------
+        x : float
+            肩の関節の中心を原点とし、前方を正とする座標軸のエンドエフェクタのモーター付け根部分の位置。単位はmm。
+        y : float
+            アームから見て左側を正とする座標軸。
+        z : float
+            上方を正とする座標軸。
+        r : float
+            上から見て反時計回りを正とするエンドエフェクタの角度。単位は度数法。
+        linear : bool
+            True の時エンドエフェクタが必ず直線の経路を取るように動かす。
+        inc : bool
+            True の時与えられた座標を現在位置からの相対座標として計算する。
+    
+        Returns
+        -------
+        cmd_index : int
+        """
+        mode = None
+        if linear:
+            if inc:
+                mode = self._PTP_MODE.MOVL_INC
+            else:
+                mode = self._PTP_MODE.MOVL_XYZ
+        else:
+            if inc:
+                mode = self._PTP_MODE.MOVJ_INC
+            else:
+                mode = self._PTP_MODE.MOVJ_XYZ
+        pos = {"x": x, "y": y, "z": z, "r": r}
+        return self._send_ptp_cmd(pos, mode)
+    def _send_ptp_cmd(self, pos, mode):
+        """
+        Parameter
+        ---------
         pos : dict of {str: float}
-            "x"(mm), "y"(mm), "z"(mm), "ang"(degree)
+        mode : DobotAPI._PTP_MODE
         """
         cmd = PTPCmd()
-        cmd.ptpMode = DobotAPI.PTP_MODE
+        cmd.ptpMode = mode.value
         cmd.x = pos["x"]
         cmd.y = pos["y"]
         cmd.z = pos["z"]
-        r = pos["ang"]
+        r = pos["r"]
         if   r < -180 : r += 360
         elif r >  180 : r -= 360
         cmd.rHead = r
