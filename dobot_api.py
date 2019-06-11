@@ -8,6 +8,8 @@ from ctypes import (cdll, create_string_buffer, Structure, byref,
 _cur_dir = path.dirname( path.abspath( __file__ ) )
 
 class Coordinate(metaclass = ABCMeta):
+    def __setattr__(self, name, value):
+        raise TypeError("Class `Coordinate` does not support attribute assignment.")
     @abstractmethod
     def validate(self):
         pass
@@ -22,25 +24,69 @@ class Coordinate(metaclass = ABCMeta):
 
 class JointCoord(Coordinate):
     def __init__(self, j1, j2, j3, j4, check=True):
-        self.J1 = j1
-        self.J2 = j2
-        self.J3 = j3
-        self.J4 = j4
+        """
+        Parameters
+        ----------
+        j1 : float
+            肩の関節の中心を原点とし、前方を正とする座標軸のエンドエフェクタのモーター付け根部分の位置。単位はmm。
+        j2 : float
+            アームから見て左側を正とする座標軸。
+        j3 : float
+            上方を正とする座標軸。
+        j4 : float
+            上から見て反時計回りを正とするエンドエフェクタの角度。単位は度数法。
+        check : bool
+            代入された値が可動域内かどうかを試験する（未実装）
+        """
+        object.__setattr__(self, "j1", j1)
+        object.__setattr__(self, "j2", j2)
+        object.__setattr__(self, "j3", j3)
+        object.__setattr__(self, "j4", j4)
         if check and not self.validate():
             raise Coordinate.OutOfRange()
     
     def validate(self):
         """ 可動域の外ならFalseにする予定 """
         return True
+    
+    def insert_in(self, target, j1="j1", j2="j2", j3="j3", j4="j4"):
+        object.__setattr__(target, j1, self.j1)
+        object.__setattr__(target, j2, self.j2)
+        object.__setattr__(target, j3, self.j3)
+        object.__setattr__(target, j4, self.j4)
+        return target
 
 class CartesianCoord(Coordinate):
     def __init__(self, x, y, z, r, check=True):
-        self.X = x
-        self.Y = y
-        self.Z = z
-        self.R = r
+        """
+        Parameters
+        ----------
+        x : float
+            肩の関節の中心を原点とし、前方を正とする座標軸のエンドエフェクタのモーター付け根部分の位置。単位はmm。
+        y : float
+            アームから見て左側を正とする座標軸。
+        z : float
+            上方を正とする座標軸。
+        r : float
+            上から見て反時計回りを正とするエンドエフェクタの角度。単位は度数法。
+        check : bool
+            代入された値が可動域内かどうかを試験する（未実装）
+        """
+        object.__setattr__(self, "x", x)
+        object.__setattr__(self, "y", y)
+        object.__setattr__(self, "z", z)
+        if   r < -180 : r += 360
+        elif r >  180 : r -= 360
+        object.__setattr__(self, "r", r)
         if check and not self.validate():
             raise Coordinate.OutOfRange()
+    
+    def insert_in(self, target, x="x", y="y", z="z", r="r"):
+        object.__setattr__(target, x, self.x)
+        object.__setattr__(target, y, self.y)
+        object.__setattr__(target, z, self.z)
+        object.__setattr__(target, r, self.r)
+        return target
     
     def validate(self):
         """ 可動域の外ならFalseにする予定 """
@@ -155,26 +201,17 @@ class DobotAPI():
     def queued_cmd_start(self):
         """ キューに積まれたコマンドの実行を開始 """
         self.send_cmd(self.api.SetQueuedCmdStartExec)
-    def set_home_params(self, x, y, z, r):
+    def set_home_params(self, coord):
         """
         ホームポジションの設定
 
         Parameters
         ----------
-        x : float
-            肩の関節の中心を原点とし、前方を正とする座標軸のエンドエフェクタのモーター付け根部分の位置。単位はmm。
-        y : float
-            アームから見て左側を正とする座標軸。
-        z : float
-            上方を正とする座標軸。
-        r : float
-            上から見て反時計回りを正とするエンドエフェクタの角度。単位は度数法。
+        coord : CartesianCoord
+            ホームポジションのデカルト座標
         """
         param = HomeParams()
-        param.x = x
-        param.y = y
-        param.z = z
-        param.r = r
+        param = coord.insert_in(param)
         return self.queue_cmd(self.api.SetHOMEParams, byref(param))
     def set_ptp_joint_prms(self, vel, acc):
         """
@@ -239,12 +276,15 @@ class DobotAPI():
 
         Returns
         -------
-        pose : dict of {str: float}
-            "x"(mm), "y"(mm), "z"(mm), "r"(degree)
+        pose : (CartesianCoord, JointCoord)
         """
         pose = Pose()
         self.send_cmd(self.api.GetPose, byref(pose))
-        return { "x": pose.x, "y": pose.y, "z": pose.z, "r": pose.rHead }
+        return (
+            CartesianCoord(pose.x, pose.y, pose.z, pose.rHead, False),
+            JointCoord(pose.joint1Angle, pose.joint2Angle,
+                       pose.joint3Angle, pose.joint4Angle, False)
+        )
 
     # Dobot 動作
     def reset_home(self):
@@ -268,20 +308,13 @@ class DobotAPI():
         REGARDLESS  = auto()
         RECTILINEAR = auto()
         JUMP = auto()
-    def ptp_xyz(self, x, y, z, r, mode=DobotAPI.RouteMode.REGARDLESS, inc=False):
+    def ptp(self, coord, mode=DobotAPI.RouteMode.REGARDLESS, inc=False):
         """
-        直交座標系で動かす。
+        アームを特定の座標まで動かす。
 
         Parameters
         ----------
-        x : float
-            肩の関節の中心を原点とし、前方を正とする座標軸のエンドエフェクタのモーター付け根部分の位置。単位はmm。
-        y : float
-            アームから見て左側を正とする座標軸。
-        z : float
-            上方を正とする座標軸。
-        r : float
-            上から見て反時計回りを正とするエンドエフェクタの角度。単位は度数法。
+        coord : Coordinate
         mode : DobotAPI.RouteMode
         inc : bool
             True の時与えられた座標を現在位置からの相対座標として計算する。
@@ -289,69 +322,35 @@ class DobotAPI():
         Returns
         -------
         cmd_index : int
-        """
-        if mode is DobotAPI.RouteMode.REGARDLESS:
-            if inc : mode = DobotAPI._PTP_MODE.MOVJ_XYZ_INC
-            else   : mode = DobotAPI._PTP_MODE.MOVJ_XYZ
-        elif mode is DobotAPI.RouteMode.RECTILINEAR:
-            if inc : mode = DobotAPI._PTP_MODE.MOVL_INC
-            else   : mode = DobotAPI._PTP_MODE.MOVL_XYZ
-        elif mode is DobotAPI.RouteMode.JUMP:
-            if inc : mode = DobotAPI._PTP_MODE.JUMP_MOVL_XYZ
-            else   : mode = DobotAPI._PTP_MODE.JUMP_XYZ
-        else : raise TypeError("mode is invalid("+str(mode)+")")
-        pos = {"x": x, "y": y, "z": z, "r": r}
-        return self._send_ptp_cmd(pos, mode)
-    def ptp_joint(self, j1, j2, j3, j4, mode=DobotAPI.RouteMode.REGARDLESS, inc=False):
-        """
-        サーボモーター単位で動かす。
-
-        Parameters
-        ----------
-        j1 : float
-            アーム根本、上から見て反時計回りを正とする角度。単位は度数法。
-        j2 : float
-            肩の関節、右から見て反時計回りを正とする角度。
-        j3 : float
-            肘の関節、右から見て反時計回りを正とする角度。
-        j4 : float
-            上から見て反時計回りを正とするエンドエフェクタの角度。
-        mode : DobotAPI.RouteMode
-        inc : bool
-            True の時与えられた座標を現在位置からの相対座標として計算する。
-    
-        Returns
-        -------
-        cmd_index : int
-        """
-        if mode is DobotAPI.RouteMode.REGARDLESS:
-            if inc : mode = DobotAPI._PTP_MODE.MOVJ_INC
-            else   : mode = DobotAPI._PTP_MODE.MOVJ_ANGLE
-        elif mode is DobotAPI.RouteMode.RECTILINEAR:
-            if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
-            else   : mode = DobotAPI._PTP_MODE.MOVL_ANGLE
-        elif mode is DobotAPI.RouteMode.JUMP:
-            if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
-            else   : mode = DobotAPI._PTP_MODE.JUMP_ANGLE
-        else : raise TypeError("mode is invalid("+str(mode)+")")
-        pos = {"x": j1, "y": j2, "z": j3, "r": j4}
-        return self._send_ptp_cmd(pos, mode)
-    def _send_ptp_cmd(self, pos, mode):
-        """
-        Parameter
-        ---------
-        pos : dict of {str: float}
-        mode : DobotAPI._PTP_MODE
         """
         cmd = PTPCmd()
-        cmd.ptpMode = mode.value
-        cmd.x = pos["x"]
-        cmd.y = pos["y"]
-        cmd.z = pos["z"]
-        r = pos["r"]
-        if   r < -180 : r += 360
-        elif r >  180 : r -= 360
-        cmd.rHead = r
+        if isinstance(coord, CartesianCoord):
+            if mode is DobotAPI.RouteMode.REGARDLESS:
+                if inc : cmd.ptpMode = DobotAPI._PTP_MODE.MOVJ_XYZ_INC.value
+                else   : cmd.ptpMode = DobotAPI._PTP_MODE.MOVJ_XYZ.value
+            elif mode is DobotAPI.RouteMode.RECTILINEAR:
+                if inc : cmd.ptpMode = DobotAPI._PTP_MODE.MOVL_INC.value
+                else   : cmd.ptpMode = DobotAPI._PTP_MODE.MOVL_XYZ.value
+            elif mode is DobotAPI.RouteMode.JUMP:
+                if inc : cmd.ptpMode = DobotAPI._PTP_MODE.JUMP_MOVL_XYZ.value
+                else   : cmd.ptpMode = DobotAPI._PTP_MODE.JUMP_XYZ.value
+            else : raise TypeError("mode is invalid("+str(mode)+")")
+            cmd = coord.insert_in(cmd, r="rHead")
+        elif isinstance(coord, JointCoord):
+            if mode is DobotAPI.RouteMode.REGARDLESS:
+                if inc : cmd.ptpMode = DobotAPI._PTP_MODE.MOVJ_INC.value
+                else   : cmd.ptpMode = DobotAPI._PTP_MODE.MOVJ_ANGLE
+            elif mode is DobotAPI.RouteMode.RECTILINEAR:
+                if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
+                else   : cmd.ptpMode = DobotAPI._PTP_MODE.MOVL_ANGLE.value
+            elif mode is DobotAPI.RouteMode.JUMP:
+                if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
+                else   : cmd.ptpMode = DobotAPI._PTP_MODE.JUMP_ANGLE.value
+            else : raise TypeError("mode is invalid("+str(mode)+")")
+            cmd = coord.insert_in(cmd, "x", "y", "z", "rHead")
+        else :
+            raise TypeError(str(type(coord)) + " is not supported for the coordinate.")
+
         return self.queue_cmd(self.api.SetPTPCmd, byref(cmd))
 
     def open_gripper(self):
