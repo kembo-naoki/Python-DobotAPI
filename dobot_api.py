@@ -1,3 +1,4 @@
+from abc    import (ABCMeta, abstractmethod)
 from enum   import (Enum, auto)
 from time   import sleep
 from os     import path
@@ -5,6 +6,45 @@ from ctypes import (cdll, create_string_buffer, Structure, byref,
                     c_uint64, c_uint32, c_float, c_byte)
 
 _cur_dir = path.dirname( path.abspath( __file__ ) )
+
+class Coordinate(metaclass = ABCMeta):
+    @abstractmethod
+    def validate(self):
+        pass
+    
+    #@abstractmethod
+    def __add__(self, other): pass
+    #@abstractmethod
+    def __sub__(self, other): pass
+
+    class OutOfRange(Exception):
+        pass
+
+class JointCoord(Coordinate):
+    def __init__(self, j1, j2, j3, j4, check=True):
+        self.J1 = j1
+        self.J2 = j2
+        self.J3 = j3
+        self.J4 = j4
+        if check and not self.validate():
+            raise Coordinate.OutOfRange()
+    
+    def validate(self):
+        """ 可動域の外ならFalseにする予定 """
+        return True
+
+class CartesianCoord(Coordinate):
+    def __init__(self, x, y, z, r, check=True):
+        self.X = x
+        self.Y = y
+        self.Z = z
+        self.R = r
+        if check and not self.validate():
+            raise Coordinate.OutOfRange()
+    
+    def validate(self):
+        """ 可動域の外ならFalseにする予定 """
+        return True
 
 class DobotAPI():
     """
@@ -37,7 +77,7 @@ class DobotAPI():
 
         if logger is not None: self.logger = logger
 
-    def __send_cmd(self, cmd, *args):
+    def send_cmd(self, cmd, *args):
         """
         コマンドを送信する。`LIM_COMMAND`回までリトライする。
 
@@ -57,7 +97,7 @@ class DobotAPI():
             raise TimeoutError("timeout error with sending command")
         else :
             raise RuntimeError("unknown error with sending command")
-    def __queue_cmd(self, cmd, *args):
+    def queue_cmd(self, cmd, *args):
         """
         コマンドを Dobot のキューに積む。
 
@@ -77,7 +117,7 @@ class DobotAPI():
         if self.stop_flg is True :
             return -1
         queued_cmd_index = c_uint64(0)
-        self.__send_cmd(cmd, *args, 1, byref(queued_cmd_index))
+        self.send_cmd(cmd, *args, 1, byref(queued_cmd_index))
         idx = queued_cmd_index.value
         self.last_cmd = idx
         return self.last_cmd
@@ -111,57 +151,67 @@ class DobotAPI():
 
     def queued_cmd_clear(self):
         """ キューに積まれたコマンドをクリア """
-        self.__send_cmd(self.api.SetQueuedCmdClear)
+        self.send_cmd(self.api.SetQueuedCmdClear)
     def queued_cmd_start(self):
         """ キューに積まれたコマンドの実行を開始 """
-        self.__send_cmd(self.api.SetQueuedCmdStartExec)
-    def set_home_params(self, pos):
+        self.send_cmd(self.api.SetQueuedCmdStartExec)
+    def set_home_params(self, x, y, z, r):
         """
         ホームポジションの設定
 
         Parameters
         ----------
-        pos : dict of {str: float}
-            "x","y","z"による座標及び"ang"によるグリッパーの角度
+        x : float
+            肩の関節の中心を原点とし、前方を正とする座標軸のエンドエフェクタのモーター付け根部分の位置。単位はmm。
+        y : float
+            アームから見て左側を正とする座標軸。
+        z : float
+            上方を正とする座標軸。
+        r : float
+            上から見て反時計回りを正とするエンドエフェクタの角度。単位は度数法。
         """
         param = HomeParams()
-        param.x = pos["x"]
-        param.y = pos["y"]
-        param.z = pos["z"]
-        param.r = pos["ang"]
-        return self.__queue_cmd(self.api.SetHOMEParams, byref(param))
-    def set_ptp_joint_prms(self, params):
+        param.x = x
+        param.y = y
+        param.z = z
+        param.r = r
+        return self.queue_cmd(self.api.SetHOMEParams, byref(param))
+    def set_ptp_joint_prms(self, vel, acc):
         """
         PTP コマンドのモーター毎の速度加速度の設定
 
         Parameters
         ----------
-        params : dict of {str: list of float}
-            "vel"が速度で"acc"が加速度。配列のインデックスは各モーターを表す。
+        vel : list of float
+            J1, J2, J3, J4 の各モーターの最高速度。単位はmm/s(0-500)
+        acc : list of float
+            J1, J2, J3, J4 の各モーターの加速度。単位はmm/s(0-500)
         """
         param = PTPJointParams()
-        param.joint1Velocity = params["vel"][0]
-        param.joint2Velocity = params["vel"][1]
-        param.joint3Velocity = params["vel"][2]
-        param.joint4Velocity = params["vel"][3]
-        param.joint1Acceleration = params["acc"][0]
-        param.joint2Acceleration = params["acc"][1]
-        param.joint3Acceleration = params["acc"][2]
-        param.joint4Acceleration = params["acc"][3]
-        return self.__queue_cmd(self.api.SetPTPJointParams, byref(param))
-    def set_ptp_common_prms(self, params):
+        param.joint1Velocity = vel[0]
+        param.joint2Velocity = vel[1]
+        param.joint3Velocity = vel[2]
+        param.joint4Velocity = vel[3]
+        param.joint1Acceleration = acc[0]
+        param.joint2Acceleration = acc[1]
+        param.joint3Acceleration = acc[2]
+        param.joint4Acceleration = acc[3]
+        return self.queue_cmd(self.api.SetPTPJointParams, byref(param))
+    def set_ptp_common_prms(self, vel, acc):
         """
         PTP コマンド使用時の速度倍率設定
 
         Parameters
         ----------
-        params : dict of {str: float}
-            "vel"が速度で"acc"が加速度。0,1,2 が x,y,z、3 が ang に対応する。
+        vel : float
+            速度の倍率。(0%-100%)
+        acc : float
+            加速度の倍率。(0%-100%)
         """
         param = PTPCommonParams()
-        param.velocityRatio = params["vel"]
-        param.accelerationRatio = params["acc"]
-        return self.__queue_cmd(self.api.SetPTPCommonParams, byref(param))
+        param.velocityRatio = vel
+        param.accelerationRatio = acc
+        return self.queue_cmd(self.api.SetPTPCommonParams, byref(param))
 
     # 情報取得
     def get_cur_cmd_index(self):
@@ -175,7 +225,7 @@ class DobotAPI():
         queued_cmd_index = c_uint64(0)
         counter = 0
         while True :
-            self.__send_cmd(self.api.GetQueuedCmdCurrentIndex, byref(queued_cmd_index))
+            self.send_cmd(self.api.GetQueuedCmdCurrentIndex, byref(queued_cmd_index))
             idx = queued_cmd_index.value
             if idx <= self.last_cmd :  break
 
@@ -190,18 +240,18 @@ class DobotAPI():
         Returns
         -------
         pose : dict of {str: float}
-            "x"(mm), "y"(mm), "z"(mm), "ang"(degree)
+            "x"(mm), "y"(mm), "z"(mm), "r"(degree)
         """
         pose = Pose()
-        self.__send_cmd(self.api.GetPose, byref(pose))
-        return { "x": pose.x, "y": pose.y, "z": pose.z, "ang": pose.rHead }
+        self.send_cmd(self.api.GetPose, byref(pose))
+        return { "x": pose.x, "y": pose.y, "z": pose.z, "r": pose.rHead }
 
     # Dobot 動作
     def reset_home(self):
         """ ホームポジションリセット """
         cmd = HOMECmd()
         cmd.temp = 0
-        return self.__queue_cmd(self.api.SetHOMECmd, byref(cmd))
+        return self.queue_cmd(self.api.SetHOMECmd, byref(cmd))
 
     class _PTP_MODE(Enum):
         JUMP_XYZ   = 0
@@ -302,19 +352,19 @@ class DobotAPI():
         if   r < -180 : r += 360
         elif r >  180 : r -= 360
         cmd.rHead = r
-        return self.__queue_cmd(self.api.SetPTPCmd, byref(cmd))
+        return self.queue_cmd(self.api.SetPTPCmd, byref(cmd))
 
     def open_gripper(self):
         """ グリッパーを開く """
-        self.__queue_cmd(self.api.SetEndEffectorGripper, 1, 0)
+        self.queue_cmd(self.api.SetEndEffectorGripper, 1, 0)
         return self.wait_cmd(DobotAPI.INTERVAL_GRIP)
     def close_gripper(self):
         """ グリッパーを閉じる """
-        self.__queue_cmd(self.api.SetEndEffectorGripper, 1, 1)
+        self.queue_cmd(self.api.SetEndEffectorGripper, 1, 1)
         return self.wait_cmd(DobotAPI.INTERVAL_GRIP)
     def stop_pump(self):
         """ ポンプの停止 """
-        return self.__queue_cmd(self.api.SetEndEffectorSuctionCup, 1, 0)
+        return self.queue_cmd(self.api.SetEndEffectorSuctionCup, 1, 0)
 
     def wait_cmd(self, ms):
         """
@@ -327,11 +377,11 @@ class DobotAPI():
         """
         cmd = WAITCmd()
         cmd.waitTime = ms
-        return self.__queue_cmd(self.api.SetWAITCmd, byref(cmd))
+        return self.queue_cmd(self.api.SetWAITCmd, byref(cmd))
     def force_stop(self):
         """ 強制停止 """
         self.stop_flg = True
-        self.__send_cmd(self.api.SetQueuedCmdForceStopExec)
+        self.send_cmd(self.api.SetQueuedCmdForceStopExec)
     def restart(self):
         """ 強制停止後の再開命令 """
         self.stop_flg = False
@@ -417,7 +467,7 @@ class DobotAPI():
         cmd = TagIOMultiplexing()
         cmd.address = pin.address
         cmd.mode = mode.value
-        result = self.__queue_cmd(self.api.SetIOMultiplexing, byref(cmd))
+        result = self.queue_cmd(self.api.SetIOMultiplexing, byref(cmd))
         pin.set_mode(mode)
         return result
     # Level I/O
@@ -436,7 +486,7 @@ class DobotAPI():
         cmd = TagIODO()
         cmd.address = pin.address
         cmd.level   = level.value
-        return self.__queue_cmd(self.api.SetIODO, byref(cmd))
+        return self.queue_cmd(self.api.SetIODO, byref(cmd))
 
 
 """ コマンド用の構造体群 """
