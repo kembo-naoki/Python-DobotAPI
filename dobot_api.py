@@ -92,7 +92,7 @@ class CartesianCoord(Coordinate):
         """ 可動域の外ならFalseにする予定 """
         return True
 
-class DobotAPI():
+class Dobot():
     """
     Attributes
     ----------
@@ -120,6 +120,8 @@ class DobotAPI():
         self.api = cdll.LoadLibrary(_cur_dir + "/libDobotDll.so.1.0.0")
         self.last_cmd = -1
         self.stop_flg = False
+
+        self.ptp = PTP(self)
 
         if logger is not None: self.logger = logger
 
@@ -201,6 +203,7 @@ class DobotAPI():
     def queued_cmd_start(self):
         """ キューに積まれたコマンドの実行を開始 """
         self.send_cmd(self.api.SetQueuedCmdStartExec)
+    
     def set_home_params(self, coord):
         """
         ホームポジションの設定
@@ -213,42 +216,6 @@ class DobotAPI():
         param = HomeParams()
         param = coord.insert_in(param)
         return self.queue_cmd(self.api.SetHOMEParams, byref(param))
-    def set_ptp_joint_prms(self, vel, acc):
-        """
-        PTP コマンドのモーター毎の速度加速度の設定
-
-        Parameters
-        ----------
-        vel : list of float
-            J1, J2, J3, J4 の各モーターの最高速度。単位はmm/s(0-500)
-        acc : list of float
-            J1, J2, J3, J4 の各モーターの加速度。単位はmm/s(0-500)
-        """
-        param = PTPJointParams()
-        param.joint1Velocity = vel[0]
-        param.joint2Velocity = vel[1]
-        param.joint3Velocity = vel[2]
-        param.joint4Velocity = vel[3]
-        param.joint1Acceleration = acc[0]
-        param.joint2Acceleration = acc[1]
-        param.joint3Acceleration = acc[2]
-        param.joint4Acceleration = acc[3]
-        return self.queue_cmd(self.api.SetPTPJointParams, byref(param))
-    def set_ptp_common_prms(self, vel, acc):
-        """
-        PTP コマンド使用時の速度倍率設定
-
-        Parameters
-        ----------
-        vel : float
-            速度の倍率。(0%-100%)
-        acc : float
-            加速度の倍率。(0%-100%)
-        """
-        param = PTPCommonParams()
-        param.velocityRatio = vel
-        param.accelerationRatio = acc
-        return self.queue_cmd(self.api.SetPTPCommonParams, byref(param))
 
     # 情報取得
     def get_cur_cmd_index(self):
@@ -293,74 +260,14 @@ class DobotAPI():
         cmd.temp = 0
         return self.queue_cmd(self.api.SetHOMECmd, byref(cmd))
 
-    class _PTP_MODE(Enum):
-        JUMP_XYZ   = 0
-        MOVJ_XYZ   = 1
-        MOVL_XYZ   = 2
-        JUMP_ANGLE = 3
-        MOVJ_ANGLE = 4
-        MOVL_ANGLE = 5
-        MOVJ_INC   = 6
-        MOVL_INC   = 7
-        MOVJ_XYZ_INC = 8
-        JUMP_MOVL_XYZ= 9
-    class RouteMode(Enum):
-        REGARDLESS  = auto()
-        RECTILINEAR = auto()
-        JUMP = auto()
-    def ptp(self, coord, mode=DobotAPI.RouteMode.REGARDLESS, inc=False):
-        """
-        アームを特定の座標まで動かす。
-
-        Parameters
-        ----------
-        coord : Coordinate
-        mode : DobotAPI.RouteMode
-        inc : bool
-            True の時与えられた座標を現在位置からの相対座標として計算する。
-    
-        Returns
-        -------
-        cmd_index : int
-        """
-        cmd = PTPCmd()
-        if isinstance(coord, CartesianCoord):
-            if mode is DobotAPI.RouteMode.REGARDLESS:
-                if inc : cmd.ptpMode = DobotAPI._PTP_MODE.MOVJ_XYZ_INC.value
-                else   : cmd.ptpMode = DobotAPI._PTP_MODE.MOVJ_XYZ.value
-            elif mode is DobotAPI.RouteMode.RECTILINEAR:
-                if inc : cmd.ptpMode = DobotAPI._PTP_MODE.MOVL_INC.value
-                else   : cmd.ptpMode = DobotAPI._PTP_MODE.MOVL_XYZ.value
-            elif mode is DobotAPI.RouteMode.JUMP:
-                if inc : cmd.ptpMode = DobotAPI._PTP_MODE.JUMP_MOVL_XYZ.value
-                else   : cmd.ptpMode = DobotAPI._PTP_MODE.JUMP_XYZ.value
-            else : raise TypeError("mode is invalid("+str(mode)+")")
-            cmd = coord.insert_in(cmd, r="rHead")
-        elif isinstance(coord, JointCoord):
-            if mode is DobotAPI.RouteMode.REGARDLESS:
-                if inc : cmd.ptpMode = DobotAPI._PTP_MODE.MOVJ_INC.value
-                else   : cmd.ptpMode = DobotAPI._PTP_MODE.MOVJ_ANGLE
-            elif mode is DobotAPI.RouteMode.RECTILINEAR:
-                if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
-                else   : cmd.ptpMode = DobotAPI._PTP_MODE.MOVL_ANGLE.value
-            elif mode is DobotAPI.RouteMode.JUMP:
-                if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
-                else   : cmd.ptpMode = DobotAPI._PTP_MODE.JUMP_ANGLE.value
-            else : raise TypeError("mode is invalid("+str(mode)+")")
-            cmd = coord.insert_in(cmd, "x", "y", "z", "rHead")
-        else :
-            raise TypeError(str(type(coord)) + " is not supported for the coordinate.")
-
-        return self.queue_cmd(self.api.SetPTPCmd, byref(cmd))
-
     def open_gripper(self):
         """ グリッパーを開く """
         self.queue_cmd(self.api.SetEndEffectorGripper, 1, 0)
-        return self.wait_cmd(DobotAPI.INTERVAL_GRIP)
+        return self.wait_cmd(Dobot.INTERVAL_GRIP)
     def close_gripper(self):
         """ グリッパーを閉じる """
         self.queue_cmd(self.api.SetEndEffectorGripper, 1, 1)
-        return self.wait_cmd(DobotAPI.INTERVAL_GRIP)
+        return self.wait_cmd(Dobot.INTERVAL_GRIP)
     def stop_pump(self):
         """ ポンプの停止 """
         return self.queue_cmd(self.api.SetEndEffectorSuctionCup, 1, 0)
@@ -384,6 +291,113 @@ class DobotAPI():
     def restart(self):
         """ 強制停止後の再開命令 """
         self.stop_flg = False
+
+    class Part(object):
+        def __init__(self, dobot):
+            self.dobot = dobot
+    class PTP(Part):
+        def set_joint_prms(self, vel, acc):
+            """
+            PTP コマンドのモーター毎の速度加速度の設定
+
+            Parameters
+            ----------
+            vel : list of float
+                J1, J2, J3, J4 の各モーターの最高速度。単位はmm/s(0-500)
+            acc : list of float
+                J1, J2, J3, J4 の各モーターの加速度。単位はmm/s(0-500)
+            """
+            param = PTPJointParams()
+            param.joint1Velocity = vel[0]
+            param.joint2Velocity = vel[1]
+            param.joint3Velocity = vel[2]
+            param.joint4Velocity = vel[3]
+            param.joint1Acceleration = acc[0]
+            param.joint2Acceleration = acc[1]
+            param.joint3Acceleration = acc[2]
+            param.joint4Acceleration = acc[3]
+            return self.dobot.queue_cmd(self.dobot.api.SetPTPJointParams, byref(param))
+        def set_common_ratio(self, vel, acc):
+            """
+            PTP コマンド使用時の速度倍率設定
+
+            Parameters
+            ----------
+            vel : float
+                速度の倍率。(0%-100%)
+            acc : float
+                加速度の倍率。(0%-100%)
+            """
+            param = PTPCommonParams()
+            param.velocityRatio = vel
+            param.accelerationRatio = acc
+            return self.dobot.queue_cmd(self.dobot.api.SetPTPCommonParams, byref(param))
+
+        class Mode(Enum):
+            JUMP_XYZ   = 0
+            MOVJ_XYZ   = 1
+            MOVL_XYZ   = 2
+            JUMP_ANGLE = 3
+            MOVJ_ANGLE = 4
+            MOVL_ANGLE = 5
+            MOVJ_INC   = 6
+            MOVL_INC   = 7
+            MOVJ_XYZ_INC = 8
+            JUMP_MOVL_XYZ= 9
+        class RouteMode(Enum):
+            REGARDLESS  = auto()
+            RECTILINEAR = auto()
+            JUMP = auto()
+        def move_to(self, coord, mode=Dobot.PTP.RouteMode.REGARDLESS, inc=False):
+            """
+            アームを特定の座標まで動かす。
+
+            Parameters
+            ----------
+            coord : Coordinate
+            mode : Dobot.PTP.RouteMode
+            inc : bool
+                True の時与えられた座標を現在位置からの相対座標として計算する。
+        
+            Returns
+            -------
+            cmd_index : int
+            """
+            RouteMode = Dobot.PTP.RouteMode
+            Mode = Dobot.PTP.Mode
+
+            cmd = PTPCmd()
+            if isinstance(coord, CartesianCoord):
+                if mode is RouteMode.REGARDLESS:
+                    if inc : cmd.ptpMode = Mode.MOVJ_XYZ_INC.value
+                    else   : cmd.ptpMode = Mode.MOVJ_XYZ.value
+                elif mode is RouteMode.RECTILINEAR:
+                    if inc : cmd.ptpMode = Mode.MOVL_INC.value
+                    else   : cmd.ptpMode = Mode.MOVL_XYZ.value
+                elif mode is RouteMode.JUMP:
+                    if inc : cmd.ptpMode = Mode.JUMP_MOVL_XYZ.value
+                    else   : cmd.ptpMode = Mode.JUMP_XYZ.value
+                else : raise TypeError("mode is invalid("+str(mode)+")")
+                cmd = coord.insert_in(cmd, r="rHead")
+
+            elif isinstance(coord, JointCoord):
+                if mode is RouteMode.REGARDLESS:
+                    if inc : cmd.ptpMode = Mode.MOVJ_INC.value
+                    else   : cmd.ptpMode = Mode.MOVJ_ANGLE
+                elif mode is RouteMode.RECTILINEAR:
+                    if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
+                    else   : cmd.ptpMode = Mode.MOVL_ANGLE.value
+                elif mode is RouteMode.JUMP:
+                    if inc : raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
+                    else   : cmd.ptpMode = Mode.JUMP_ANGLE.value
+                else : raise TypeError("mode is invalid("+str(mode)+")")
+                cmd = coord.insert_in(cmd, "x", "y", "z", "rHead")
+
+            else :
+                raise TypeError(str(type(coord)) + " is not supported for the coordinate.")
+
+            return self.dobot.queue_cmd(self.dobot.api.SetPTPCmd, byref(cmd))
+
     
     # 外部IO
     class IOMode(Enum):
@@ -405,7 +419,7 @@ class DobotAPI():
             """
             self.address = address
             self.volt = volt
-            self.permission = set([DobotAPI.IOMode.INVALID]+list(permission))
+            self.permission = set([Dobot.IOMode.INVALID]+list(permission))
             self.mode = None
         def set_mode(self, mode):
             self.mode = mode
