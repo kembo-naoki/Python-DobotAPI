@@ -7,6 +7,7 @@ from ctypes import (cdll, create_string_buffer, Structure, byref,
 
 _cur_dir = path.dirname( path.abspath( __file__ ) )
 
+
 class Coordinate(metaclass = ABCMeta):
     def __setattr__(self, name, value):
         raise TypeError("Class `Coordinate` does not support attribute assignment.")
@@ -20,9 +21,12 @@ class Coordinate(metaclass = ABCMeta):
     #@abstractmethod
     def __sub__(self, other):
         pass
-
-    class OutOfRange(Exception):
-        """ 未定義 """
+    
+    @abstractmethod
+    def validate(self):
+        pass
+    @abstractmethod
+    def insert_in(self, target):
         pass
 
 class JointCoord(Coordinate):
@@ -44,13 +48,15 @@ class JointCoord(Coordinate):
         object.__setattr__(self, "j1", j1)
         object.__setattr__(self, "j2", j2)
         object.__setattr__(self, "j3", j3)
+        if   j4 < -180: j4 += 360
+        elif j4 >  180: j4 -= 360
         object.__setattr__(self, "j4", j4)
-        if check and not self.validate():
-            raise Coordinate.OutOfRange()
+        if check:
+            self.validate
 
     def validate(self):
-        """ 可動域の外ならFalseにする予定 """
-        return True
+        """ 可動域の外なら ValueError を排出する予定 """
+        pass
 
     def insert_in(self, target, j1="j1", j2="j2", j3="j3", j4="j4"):
         object.__setattr__(target, j1, self.j1)
@@ -81,8 +87,8 @@ class CartesianCoord(Coordinate):
         if   r < -180: r += 360
         elif r >  180: r -= 360
         object.__setattr__(self, "r", r)
-        if check and not self.validate():
-            raise Coordinate.OutOfRange()
+        if check:
+            self.validate
 
     def insert_in(self, target, x="x", y="y", z="z", r="r"):
         object.__setattr__(target, x, self.x)
@@ -92,8 +98,8 @@ class CartesianCoord(Coordinate):
         return target
 
     def validate(self):
-        """ 可動域の外ならFalseにする予定 """
-        return True
+        """ 可動域の外なら ValueError を排出する予定 """
+        pass
 
 class Dobot():
     """
@@ -111,7 +117,6 @@ class Dobot():
     INTERVAL_CMD = 0.005
     INTERVAL_GRIP = 1000
     LIM_COMMAND = 5
-    PTP_MODE = 1 #PTPMOVJXYZMode
 
     def __init__(self, logger=None):
         """
@@ -145,9 +150,9 @@ class Dobot():
         if result == 0:
             return result
         elif result == 1:
-            raise ConnectionError("connection error with sending command")
+            raise ConnectionErrorByDobot("connection error with sending command")
         elif result == 2:
-            raise TimeoutError("timeout error with sending command")
+            raise TimeoutByDobot("timeout error with sending command")
         else:
             raise RuntimeError("unknown error with sending command")
     def queue_cmd(self, cmd, *args):
@@ -212,7 +217,7 @@ class Dobot():
     def connect(self):
         """ 接続 """
         if self.api.SearchDobot(create_string_buffer(1000),  1000) == 0:
-            raise ConnectionError("dobot not found")
+            raise ConnectionErrorByDobot("dobot not found")
 
         port_name = ""
         baud_rate = 115200
@@ -225,9 +230,9 @@ class Dobot():
         if result == 0: # No Error
             self.is_connected = True
         elif result == 1:
-            raise ConnectionError("connection error with first connecting")
+            raise ConnectionErrorByDobot("connection error with first connecting")
         elif result == 2:
-            raise TimeoutError("timeout error with first connecting")
+            raise TimeoutByDobot("timeout error with first connecting")
         else:
             raise RuntimeError("unknown error with first connecting")
     def set_home_params(self, coord):
@@ -285,7 +290,7 @@ class Dobot():
         cmd = HOMECmd()
         cmd.temp = 0
         return self.queue_cmd(self.api.SetHOMECmd, byref(cmd))
-    def wait_cmd(self, ms):
+    def wait(self, ms):
         """
         待機命令
 
@@ -301,19 +306,43 @@ class Dobot():
     def open_gripper(self):
         """ グリッパーを開く """
         self.queue_cmd(self.api.SetEndEffectorGripper, 1, 0)
-        return self.wait_cmd(Dobot.INTERVAL_GRIP)
+        return self.wait(Dobot.INTERVAL_GRIP)
     def close_gripper(self):
         """ グリッパーを閉じる """
         self.queue_cmd(self.api.SetEndEffectorGripper, 1, 1)
-        return self.wait_cmd(Dobot.INTERVAL_GRIP)
+        return self.wait(Dobot.INTERVAL_GRIP)
     def stop_pump(self):
         """ ポンプの停止 """
         return self.queue_cmd(self.api.SetEndEffectorSuctionCup, 1, 0)
-
-    class Part(object):
+    
+    class Part(metaclass=ABCMeta):
+        """ Dobot の機能毎のクラス """
         def __init__(self, dobot):
             self.dobot = dobot
+            self.check_list = {}
+            self.requirements = ()
+        
+        def check_settings(self, opts=()):
+            """ このコマンドが送信可能か否か """ 
+            req_list = self.requirements + opts
+            message = None
+            for req in req_list:
+                if isinstance(req, tuple):
+                    if not any(self.check_list[k] for k in req):
+                        message  = "need setting by at least one method of ("
+                        message += ", ".join("set_"+name for name in req) + ")"
+                elif not self.check_list[req]:
+                    message = "need setting by `" + req + "` method"
+            if message is not None:
+                raise RuntimeError(message)
+
     class PTP(Part):
+        def __init__(self, dobot):
+            self.dobot = dobot
+            self.check_list = {
+                "joint_prms": False,
+                "common_ratio": False }
+            self.requirements = ("joint_prms", "common_ratio")
         def set_joint_prms(self, vel, acc):
             """
             PTP コマンドのモーター毎の速度加速度の設定
@@ -334,7 +363,8 @@ class Dobot():
             param.joint2Acceleration = acc[1]
             param.joint3Acceleration = acc[2]
             param.joint4Acceleration = acc[3]
-            return self.dobot.queue_cmd(self.dobot.api.SetPTPJointParams, byref(param))
+            self.dobot.queue_cmd(self.dobot.api.SetPTPJointParams, byref(param))
+            self.check_list["joint_prms"] = True
         def set_common_ratio(self, vel, acc):
             """
             PTP コマンド使用時の速度倍率設定
@@ -349,7 +379,8 @@ class Dobot():
             param = PTPCommonParams()
             param.velocityRatio = vel
             param.accelerationRatio = acc
-            return self.dobot.queue_cmd(self.dobot.api.SetPTPCommonParams, byref(param))
+            self.dobot.queue_cmd(self.dobot.api.SetPTPCommonParams, byref(param))
+            self.check_list["common_ratio"] = True
 
         class Mode(Enum):
             JUMP_XYZ   = 0
@@ -363,58 +394,111 @@ class Dobot():
             MOVJ_XYZ_INC = 8
             JUMP_MOVL_XYZ= 9
         class RouteMode(Enum):
-            REGARDLESS  = auto()
-            RECTILINEAR = auto()
+            REGARDLESS = auto()
+            LINEAR = auto()
             JUMP = auto()
-        def move_to(self, coord, mode=Dobot.PTP.RouteMode.REGARDLESS, inc=False):
+        MODE_LIST = {
+            RouteMode.REGARDLESS: {
+                CartesianCoord: {
+                    "absolute": Mode.MOVJ_XYZ,
+                    "relative": Mode.MOVJ_XYZ_INC
+                },
+                JointCoord: {
+                    "absolute": Mode.MOVJ_ANGLE,
+                    "relative": Mode.MOVJ_INC
+                }
+            },
+            RouteMode.LINEAR: {
+                CartesianCoord: {
+                    "absolute": Mode.MOVL_XYZ,
+                    "relative": Mode.MOVL_INC
+                },
+                JointCoord: {
+                    "absolute": Mode.MOVL_ANGLE,
+                    "relative": {"message": "You can't use `relative` mode with `JointCoordinate`."}
+                }
+            },
+            RouteMode.JUMP: {
+                CartesianCoord: {
+                    "absolute": Mode.JUMP_XYZ,
+                    "relative": Mode.JUMP_MOVL_XYZ
+                },
+                JointCoord: {
+                    "absolute": Mode.JUMP_ANGLE,
+                    "relative": {"message": "You can't use `relative` mode with `JointCoordinate`."}
+                }
+            }
+        }
+        def _exec(self, coord, route_mode, relative):
             """
             アームを特定の座標まで動かす。
 
             Parameters
             ----------
             coord: Coordinate
-            mode: Dobot.PTP.RouteMode
-            inc: bool
-                True の時与えられた座標を現在位置からの相対座標として計算する。
+            route_mode: Dobot.PTP.Mode
+            relative: bool
 
             Returns
             -------
             cmd_index: int
             """
-            RouteMode = Dobot.PTP.RouteMode
-            Mode = Dobot.PTP.Mode
-
             cmd = PTPCmd()
-            if isinstance(coord, CartesianCoord):
-                if mode is RouteMode.REGARDLESS:
-                    if inc: cmd.ptpMode = Mode.MOVJ_XYZ_INC.value
-                    else: cmd.ptpMode = Mode.MOVJ_XYZ.value
-                elif mode is RouteMode.RECTILINEAR:
-                    if inc: cmd.ptpMode = Mode.MOVL_INC.value
-                    else: cmd.ptpMode = Mode.MOVL_XYZ.value
-                elif mode is RouteMode.JUMP:
-                    if inc: cmd.ptpMode = Mode.JUMP_MOVL_XYZ.value
-                    else: cmd.ptpMode = Mode.JUMP_XYZ.value
-                else: raise TypeError("mode is invalid("+str(mode)+")")
-                cmd = coord.insert_in(cmd, r="rHead")
-
-            elif isinstance(coord, JointCoord):
-                if mode is RouteMode.REGARDLESS:
-                    if inc: cmd.ptpMode = Mode.MOVJ_INC.value
-                    else: cmd.ptpMode = Mode.MOVJ_ANGLE
-                elif mode is RouteMode.RECTILINEAR:
-                    if inc: raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
-                    else: cmd.ptpMode = Mode.MOVL_ANGLE.value
-                elif mode is RouteMode.JUMP:
-                    if inc: raise ValueError("This mode is not supported.(ptp_joint, mode:"+str(mode)+", inc:True)")
-                    else: cmd.ptpMode = Mode.JUMP_ANGLE.value
-                else: raise TypeError("mode is invalid("+str(mode)+")")
-                cmd = coord.insert_in(cmd, "x", "y", "z", "rHead")
-
-            else:
-                raise TypeError(str(type(coord)) + " is not supported for the coordinate.")
-
+            pos = "relative" if relative else "absolute"
+            mode = Dobot.PTP.MODE_LIST[route_mode][type(coord)][pos]
+            if not isinstance(mode, Dobot.PTP.Mode):
+                raise ValueError(mode["message"])
+            cmd.ptpMode = mode.value
+            cmd = coord.insert_in(cmd, "x", "y", "z", "rHead")
             return self.dobot.queue_cmd(self.dobot.api.SetPTPCmd, byref(cmd))
+        def move_to(self, point, relative=False):
+            """
+            アームを特定の座標まで任意の経路で動かす。
+
+            Parameters
+            ----------
+            point: Coordinate
+                目的地
+            relative: bool
+                True ならば point を相対座標として動かす。
+
+            Returns
+            -------
+            cmd_index: int
+            """
+            return self._exec(point, Dobot.PTP.RouteMode.REGARDLESS, relative)
+        def move_linearly(self, point, relative=False):
+            """
+            アームを特定の座標まで一直線に動かす。
+
+            Parameters
+            ----------
+            point: Coordinate
+                目的地
+            relative: bool
+                True ならば point を相対座標として動かす。
+
+            Returns
+            -------
+            cmd_index: int
+            """
+            return self._exec(point, Dobot.PTP.RouteMode.LINEAR, relative)
+        def jump_to(self, point, relative=False):
+            """
+            アームを特定の座標まで一度持ち上げてから下ろすような経路で動かす。
+
+            Parameters
+            ----------
+            point: Coordinate
+                目的地
+            relative: bool
+                True ならば point を相対座標として動かす。
+
+            Returns
+            -------
+            cmd_index: int
+            """
+            return self._exec(point, Dobot.PTP.RouteMode.JUMP, relative)
 
 
     # 外部IO
@@ -519,8 +603,20 @@ class Dobot():
         cmd.level   = level.value
         return self.queue_cmd(self.api.SetIODO, byref(cmd))
 
+# エラー
+class ErrorByDobot(Exception):
+    """ Dobot から送出されるエラー """
+    pass
+class TimeoutByDobot(ErrorByDobot, TimeoutError):
+    """
+    Dobot から送信されるタイムアウトエラー
+    通信不安定などによって生じるスクリプト上でのタイムアウトエラーは除く
+    """
+    pass
+class ConnectionErrorByDobot(ErrorByDobot, ConnectionError):
+    pass
 
-""" コマンド用の構造体群 """
+# コマンド用の構造体群
 class HomeParams(Structure):
     _pack_ = 1
     _fields_ = [
