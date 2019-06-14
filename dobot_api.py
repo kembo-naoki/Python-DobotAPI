@@ -9,7 +9,7 @@ _CUR_DIR = path.dirname( path.abspath( __file__ ) )
 API = cdll.LoadLibrary(_CUR_DIR + "/libDobotDll.so.1.0.0")
 
 
-class Coordinate(metaclass = ABCMeta):
+class Coordinate(metaclass=ABCMeta):
     def __setattr__(self, name, value):
         raise TypeError("Class `Coordinate` does not support attribute assignment.")
     @abstractmethod
@@ -129,6 +129,7 @@ class Dobot():
 
         self.queue = QueueController(self)
         self.ptp = PTP(self)
+        self.io = IO(self)
 
         if logger is not None: self.logger = logger
 
@@ -275,112 +276,6 @@ class Dobot():
         """ ポンプの停止 """
         return self.queue.send(API.SetEndEffectorSuctionCup, 1, 0, imm=imm)
     
-    # 外部IO
-    class IOMode(Enum):
-        INVALID = 0
-        LEVEL_OUTPUT = 1
-        PWM_OUTPUT = 2
-        LEVEL_INPUT = 3
-        AD_INPUT = 4
-        # PULLUP_INPUT = 5
-        # PULLDOWN_INPUT = 6
-    class Pin(object):
-        def __init__(self, address, volt, permission=[]):
-            """
-            Parameters
-            ----------
-            address: int
-            volt: float
-            permission: list of IOMode
-            """
-            self.address = address
-            self.volt = volt
-            self.permission = set([Dobot.IOMode.INVALID]+list(permission))
-            self.mode = None
-        def set_mode(self, mode):
-            self.mode = mode
-    class Interface(object):
-        def __init__(self, *pins):
-            """
-            Parameters
-            ----------
-            label: str
-            pins: (int, str, DobotAPI._Interface._Pin)
-            """
-            self.pins = {}
-            for pin in pins:
-                self.pins[pin[0]] = pin[2]
-                self.pins[pin[1]] = pin[2]
-    _LvOut = IOMode.LEVEL_OUTPUT
-    _LvIn  = IOMode.LEVEL_INPUT
-    _PWM = IOMode.PWM_OUTPUT
-    _ADC = IOMode.AD_INPUT
-    _heat_12v = Pin(3, 12, [_LvOut])
-    Interfaces = {
-        "base": {
-            "UART": Interface( (3, "E2",       Pin(18, 3.3, [_LvOut])),
-                                (7, "STOP_KEY", Pin(20, 3.3, [_LvIn ])),
-                                (8, "E1",       Pin(19, 3.3, [_LvIn ])) ),
-
-            "GP1": Interface( (1, "REV", Pin(10, 5.0, [_LvOut      ])),
-                                (2, "PWM", Pin(11, 3.3, [_LvOut, _PWM])),
-                                (3, "ADC", Pin(12, 3.3, [_LvIn       ])) ),
-            "GP2": Interface( (1, "REV", Pin(13, 5.0, [_LvOut])),
-                                (2, "PWM", Pin(14, 3.3, [_LvOut, _LvIn, _PWM])),
-                                (3, "ADC", Pin(15, 3.3, [_LvOut, _LvIn, _ADC])) ),
-            "SW1": Interface( (1, "VALVE", Pin(16, 12, [_LvOut]))),
-            "SW2": Interface( (1, "PUMP" , Pin(16, 12, [_LvOut])))
-        },
-        "arm": {
-            "GP3": Interface( (2, "PWM", Pin(8, 3.3, [_LvOut, _PWM       ])),
-                               (3, "ADC", Pin(9, 3.3, [_LvOut, _LvIn, _ADC])) ),
-            "GP4": Interface( (2, "PWM", Pin(6, 3.3, [_LvOut, _PWM])),
-                               (3, "ADC", Pin(7, 3.3, [_LvIn       ])) ),
-            "GP5": Interface( (2, "PWM", Pin(4, 3.3, [_LvOut, _PWM])),
-                               (3, "ADC", Pin(5, 3.3, [_LvIn       ])) ),
-            "SW3": Interface( (2, "HEAT_12V", _heat_12v), (3, "HEAT_12V", _heat_12v) ),
-
-            "SW4":    Interface( (1, "FAN_12V", Pin(2, 12, [_LvOut])) ),
-            "ANALOG": Interface( (1, "Temp", Pin(1, 3.3, [_LvOut, _LvIn, _ADC])) )
-        }
-    }
-    def config_io(self, pin, mode, *, imm=False):
-        """
-        特定の I/O ポートのモード設定
-
-        Parameters
-        ----------
-        pin: DobotAPI.Pin
-        mode: DobotAPI.IOMode
-        imm: bool
-            True のとき即座に実行する
-        """
-        cmd = TagIOMultiplexing()
-        cmd.address = pin.address
-        cmd.mode = mode.value
-        result = self.queue.send(API.SetIOMultiplexing, byref(cmd), imm=imm)
-        pin.set_mode(mode)
-        return result
-    # Level I/O
-    class Level(Enum):
-        LOW = 0
-        HIGH = 1
-    def level_out(self, pin, level, *, imm=False):
-        """
-        特定の I/O ポートの出力設定
-
-        Parameters
-        ----------
-        pin: DobotAPI.Pin
-        mode: DobotAPI.Level
-        imm: bool
-            True のとき即座に実行する
-        """
-        cmd = TagIODO()
-        cmd.address = pin.address
-        cmd.level   = level.value
-        return self.queue.send(API.SetIODO, byref(cmd), imm=imm)
-
 class CommandModule(metaclass=ABCMeta):
     """ Dobot の機能毎のクラス """
     def __init__(self, dobot):
@@ -625,6 +520,127 @@ class PTP(CommandModule):
         cmd_index: int
         """
         return self._exec(point, PTP.RouteMode.JUMP, relative)
+
+class IO(CommandModule):
+    class Mode(Enum):
+        INVALID = 0
+        LEVEL_OUTPUT = 1
+        PWM_OUTPUT = 2
+        LEVEL_INPUT = 3
+        AD_INPUT = 4
+        # PULLUP_INPUT = 5
+        # PULLDOWN_INPUT = 6
+    def __init__(self, dobot):
+        self.dobot = dobot
+        # 設定用の仮の定数
+        LvOut = IO.Mode.LEVEL_OUTPUT
+        LvIn  = IO.Mode.LEVEL_INPUT
+        PWM   = IO.Mode.PWM_OUTPUT
+        ADC   = IO.Mode.AD_INPUT
+        # ベース部分のインターフェイス
+        self.uart = UART(dobot, E1=Pin(dobot, 19, 3.3, [LvIn]),
+                                E2=Pin(dobot, 18, 3.3, [LvOut]),
+                                STOP_KEY=Pin(dobot, 20, 3.3, [LvIn]))
+        self.gp1 = GPOfBase(dobot, REV=Pin(dobot, 10, 5.0, [LvOut]),
+                                   PWM=Pin(dobot, 11, 3.3, [LvOut, PWM]),
+                                   ADC=Pin(dobot, 12, 3.3, [LvIn]))
+        self.gp2 = GPOfBase(dobot, REV=Pin(dobot, 13, 5.0, [LvOut]),
+                                   PWM=Pin(dobot, 14, 3.3, [LvOut, LvIn, PWM]),
+                                   ADC=Pin(dobot, 15, 3.3, [LvOut, LvIn, ADC]))
+        self.sw1 = SW1(dobot, VALVE=Pin(dobot, 16, 12, [LvOut]))
+        self.sw2 = SW2(dobot, PUMP=Pin(dobot, 16, 12, [LvOut]))
+        # アーム部分のインターフェイス
+        self.gp3 = GPOfArm(dobot, PWM=Pin(dobot, 8, 3.3, [LvOut, PWM]),
+                                  ADC=Pin(dobot, 9, 3.3, [LvOut, LvIn, ADC]))
+        self.gp4 = GPOfArm(dobot, PWM=Pin(dobot, 6, 3.3, [LvOut, PWM]),
+                                  ADC=Pin(dobot, 7, 3.3, [LvIn]))
+        self.gp5 = GPOfArm(dobot, PWM=Pin(dobot, 4, 3.3, [LvOut, PWM]),
+                                  ADC=Pin(dobot, 5, 3.3, [LvIn]))
+        self.sw3 = SW3(dobot, HEAT_12V=Pin(dobot, 3, 12, [LvOut]))
+        self.sw4 = SW4(dobot, FAN_12V=Pin(dobot, 2, 12, [LvOut]))
+        self.analog = ANALOG(dobot, Temp=Pin(dobot, 1, 3.3, [LvOut, LvIn, ADC]))
+
+class Interface(CommandModule):
+    def __init__(self, dobot, **kwargs):
+        self.dobot = dobot
+        self.PINS_BY_POS = {}
+        for label in kwargs:
+            if not label in self.PIN_POS:
+                raise TypeError(str(type(self))+" Interface doesn't have `"+label+"` Pin")
+            pin = kwargs[label]
+            setattr(self, label, pin)
+            self.PINS_BY_POS[self.PIN_POS[label]] = pin
+        if len(kwargs) < len(self.PIN_POS):
+            raise TypeError(str(type(self))+" Interface is missing any pin")
+    def __getitem__(self, key):
+        return self.PINS_BY_POS[key]
+UART = type("UART", Interface, {"PIN_POS": {"E1": 8, "E2": 3, "STOP_KEY": 7}})
+GPOfBase = type("GPOfBase", Interface, {"PIN_POS": {"REV": 1, "PWM": 2, "ADC": 3}})
+GPOfArm  = type("GPOfArm", Interface, {"PIN_POS": {"PWM": 2, "ADC": 3}})
+SW1 = type("SW1", Interface, {"PIN_POS": {"VALVE": 1}})
+SW2 = type("SW2", Interface, {"PIN_POS": {"PUMP": 1}})
+SW4 = type("SW4", Interface, {"PIN_POS": {"FAN_12V": 1}})
+ANALOG = type("ANALOG", Interface, {"PIN_POS": {"Temp": 1}})
+class SW3(Interface):
+    def __init__(self, dobot, HEAT_12V):
+        self.dobot = dobot
+        pin = HEAT_12V
+        self.HEAT_12V = pin
+        self.PINS_BY_POS = {2: pin, 3: pin}
+
+class Pin(CommandModule):
+    def __init__(self, dobot, address, volt, permission=[]):
+        """
+        Parameters
+        ----------
+        dobot: Dobot
+        address: int
+        volt: float
+        permission: list of IO.Mode
+        """
+        self.ADDRESS = address
+        self.VOLT = volt
+        self.PERMISSION = set([IO.Mode.INVALID]+permission)
+        self.mode = None
+    def config(self, mode, *, imm=False):
+        """
+        I/O モードの設定
+
+        Parameters
+        ----------
+        mode: IO.Mode
+        imm: bool
+            True のとき即座に実行する
+        """
+        if not mode in self.PERMISSION:
+            raise ValueError("this mode is not supported ("+mode._name_+")")
+        cmd = TagIOMultiplexing()
+        cmd.address = self.ADDRESS
+        cmd.mode = mode.value
+        result = self.dobot.queue.send(API.SetIOMultiplexing, byref(cmd), imm=imm)
+        pin.set_mode(mode)
+        return result
+    def check_mode(self, mode):
+        if self.mode is not mode:
+            raise RuntimeError("This pin is not mode `"+mode._name_+"`")
+    # Level I/O
+    def level_out(self, level, *, imm=False):
+        """
+        特定の I/O ポートの出力設定
+
+        Parameters
+        ----------
+        level: bool
+        imm: bool
+            True のとき即座に実行する
+        """
+        self.check_mode(IO.Mode.LEVEL_OUTPUT)
+        cmd = TagIODO()
+        cmd.address = self.ADDRESS
+        cmd.level   = int(level)
+        return self.queue.send(API.SetIODO, byref(cmd), imm=imm)
+
+
 
 # エラー
 class ErrorByDobot(Exception):
