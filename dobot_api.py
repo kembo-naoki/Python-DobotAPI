@@ -3,7 +3,7 @@ from enum   import (Enum, auto)
 from time   import sleep
 from os     import path
 from ctypes import (cdll, create_string_buffer, Structure, byref,
-                    c_uint64, c_uint32, c_float, c_byte)
+                    c_uint64, c_uint32, c_ushort, c_float, c_byte)
 
 _CUR_DIR = path.dirname( path.abspath( __file__ ) )
 API = cdll.LoadLibrary(_CUR_DIR + "/libDobotDll.so.1.0.0")
@@ -136,7 +136,7 @@ class Dobot():
     # コマンドそのものに関するメソッド
     def send_cmd(self, cmd, *args):
         """
-        コマンドを送信する。`LIM_COMMAND`回までリトライする。
+        コマンドを送信する
 
         Parameters
         ----------
@@ -574,13 +574,13 @@ class Interface(CommandModule):
             raise TypeError(str(type(self))+" Interface is missing any pin")
     def __getitem__(self, key):
         return self.PINS_BY_POS[key]
-UART = type("UART", Interface, {"PIN_POS": {"E1": 8, "E2": 3, "STOP_KEY": 7}})
-GPOfBase = type("GPOfBase", Interface, {"PIN_POS": {"REV": 1, "PWM": 2, "ADC": 3}})
-GPOfArm  = type("GPOfArm", Interface, {"PIN_POS": {"PWM": 2, "ADC": 3}})
-SW1 = type("SW1", Interface, {"PIN_POS": {"VALVE": 1}})
-SW2 = type("SW2", Interface, {"PIN_POS": {"PUMP": 1}})
-SW4 = type("SW4", Interface, {"PIN_POS": {"FAN_12V": 1}})
-ANALOG = type("ANALOG", Interface, {"PIN_POS": {"Temp": 1}})
+UART = type("UART", Interface, { "PIN_POS": {"E1": 8, "E2": 3, "STOP_KEY": 7} })
+SW1  = type("SW1",  Interface, { "PIN_POS": {"VALVE": 1} })
+SW2  = type("SW2",  Interface, { "PIN_POS": {"PUMP":  1} })
+SW4  = type("SW4",  Interface, { "PIN_POS": {"FAN_12V": 1} })
+GPOfBase = type("GPOfBase", Interface, { "PIN_POS": {"REV": 1, "PWM": 2, "ADC": 3} })
+GPOfArm  = type("GPOfArm",  Interface, { "PIN_POS": {"PWM": 2, "ADC": 3} })
+ANALOG   = type("ANALOG",   Interface, { "PIN_POS": {"Temp": 1} })
 class SW3(Interface):
     def __init__(self, dobot, HEAT_12V):
         self.dobot = dobot
@@ -601,6 +601,7 @@ class Pin(CommandModule):
         self.ADDRESS = address
         self.VOLT = volt
         self.PERMISSION = set([IO.Mode.INVALID]+permission)
+        self.dobot = dobot
         self.mode = None
     def config(self, mode, *, imm=False):
         """
@@ -614,7 +615,7 @@ class Pin(CommandModule):
         """
         if not mode in self.PERMISSION:
             raise ValueError("this mode is not supported ("+mode._name_+")")
-        cmd = TagIOMultiplexing()
+        cmd = IOMultiplexing()
         cmd.address = self.ADDRESS
         cmd.mode = mode.value
         result = self.dobot.queue.send(API.SetIOMultiplexing, byref(cmd), imm=imm)
@@ -623,10 +624,10 @@ class Pin(CommandModule):
     def check_mode(self, mode):
         if self.mode is not mode:
             raise RuntimeError("This pin is not mode `"+mode._name_+"`")
-    # Level I/O
+    # Output
     def level_out(self, level, *, imm=False):
         """
-        特定の I/O ポートの出力設定
+        このピンの出力 ON / OFF
 
         Parameters
         ----------
@@ -635,12 +636,59 @@ class Pin(CommandModule):
             True のとき即座に実行する
         """
         self.check_mode(IO.Mode.LEVEL_OUTPUT)
-        cmd = TagIODO()
+        cmd = IODO()
         cmd.address = self.ADDRESS
         cmd.level   = int(level)
-        return self.queue.send(API.SetIODO, byref(cmd), imm=imm)
+        return self.dobot.queue.send(API.SetIODO, byref(cmd), imm=imm)
+    def pwm_out(self, freq, duty, *, imm=False):
+        """
+        このピンの PWM 出力
 
+        Parameters
+        ----------
+        freq: float
+            周波数(10-1,000,000Hz)
+        duty: float
+            デューティ比(0-100%)
+        imm: bool
+            True のとき即座に実行する
+        """
+        self.check_mode(IO.Mode.PWM_OUTPUT)
+        cmd = IOPWM()
+        cmd.address = self.ADDRESS
+        cmd.frequency = freq
+        cmd.dutyCycle = duty
+        return self.dobot.queue.send(API.SetIOPWM, byref(cmd), imm=imm)
+    # Input
+    def get_level(self):
+        """
+        このピンへの入力
 
+        Returns
+        -------
+        level: bool
+        """
+        self.check_mode(IO.Mode.LEVEL_INPUT)
+        cmd = IODO()
+        cmd.address = self.ADDRESS
+        cmd.level   = 0
+        self.dobot.send_cmd(API.GetIODI, byref(cmd))
+        return (cmd.level == 1)
+    def get_value(self):
+        """
+        このピンへのアナログ入力
+
+        Returns
+        -------
+        value: int
+            0-4095
+        """
+        self.check_mode(IO.Mode.AD_INPUT)
+        cmd = IOADC()
+        cmd.address = self.ADDRESS
+        cmd.value = 0
+        self.dobot.send_cmd(API.GetIOADC, byref(cmd))
+        return cmd.value
 
 # エラー
 class DobotError(Exception):
@@ -710,16 +758,29 @@ class PTPCmd(Structure):
         ("z", c_float),
         ("rHead", c_float) ]
 
-class TagIOMultiplexing(Structure):
+class IOMultiplexing(Structure):
     _pack_ = 1
     _fields_ = [
         ("address", c_byte),
         ("mode", c_byte)
     ]
-
-class TagIODO(Structure):
+class IODO(Structure):
     _pack_ = 1
     _fields_ = [
         ("address", c_byte),
         ("level", c_byte)
     ]
+class IOPWM(Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("address", c_byte),
+        ("frequency", c_float),
+        ("dutyCycle", c_float)
+    ]
+class IOADC(Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("address", c_byte),
+        ("value", c_ushort)
+    ]
+
