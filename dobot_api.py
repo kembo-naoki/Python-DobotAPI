@@ -149,9 +149,9 @@ class Dobot():
         if result == 0:
             return result
         elif result == 1:
-            raise ConnectionErrorByDobot("connection error with sending command")
+            raise DobotConnectionError("connection error with sending command")
         elif result == 2:
-            raise TimeoutByDobot("timeout error with sending command")
+            raise DobotTimeout("timeout error with sending command")
         else:
             raise RuntimeError("unknown error with sending command")
     def force_stop(self):
@@ -170,7 +170,7 @@ class Dobot():
     def connect(self):
         """ 接続 """
         if API.SearchDobot(create_string_buffer(1000),  1000) == 0:
-            raise ConnectionErrorByDobot("dobot not found")
+            raise DobotConnectionError("dobot not found")
 
         port_name = ""
         baud_rate = 115200
@@ -183,9 +183,9 @@ class Dobot():
         if result == 0: # No Error
             self.is_connected = True
         elif result == 1:
-            raise ConnectionErrorByDobot("connection error with first connecting")
+            raise DobotConnectionError("connection error with first connecting")
         elif result == 2:
-            raise TimeoutByDobot("timeout error with first connecting")
+            raise DobotTimeout("timeout error with first connecting")
         else:
             raise RuntimeError("unknown error with first connecting")
     def set_home_params(self, coord, *, imm=False):
@@ -643,16 +643,17 @@ class Pin(CommandModule):
 
 
 # エラー
-class ErrorByDobot(Exception):
+class DobotError(Exception):
     """ Dobot から送出されるエラー """
     pass
-class TimeoutByDobot(ErrorByDobot, TimeoutError):
+class DobotTimeout(DobotError, TimeoutError):
     """
     Dobot から送信されるタイムアウトエラー
     通信不安定などによって生じるスクリプト上でのタイムアウトエラーは除く
     """
     pass
-class ConnectionErrorByDobot(ErrorByDobot, ConnectionError):
+class DobotConnectionError(DobotError, ConnectionError):
+    """ Dobot との通信に関するエラー """
     pass
 
 # コマンド用の構造体群
