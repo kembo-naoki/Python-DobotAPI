@@ -1,106 +1,15 @@
-from abc    import (ABCMeta, abstractmethod)
 from enum   import (Enum, auto)
 from time   import sleep
 from os     import path
 from ctypes import (cdll, create_string_buffer, Structure, byref,
                     c_uint64, c_uint32, c_ushort, c_float, c_byte)
 
+from coordinate import ( Coordinate,
+    CartesianAbsoluteCoordinate as CartesianCoord,
+    JointAbsoluteCoordinate as JointCoord )
+
 _CUR_DIR = path.dirname( path.abspath( __file__ ) )
 API = cdll.LoadLibrary(_CUR_DIR + "/libDobotDll.so.1.0.0")
-
-
-class Coordinate(metaclass=ABCMeta):
-    def __setattr__(self, name, value):
-        raise TypeError("Class `Coordinate` does not support attribute assignment.")
-    @abstractmethod
-    def validate(self):
-        pass
-
-    #@abstractmethod
-    def __add__(self, other):
-        pass
-    #@abstractmethod
-    def __sub__(self, other):
-        pass
-    
-    @abstractmethod
-    def validate(self):
-        pass
-    @abstractmethod
-    def insert_in(self, target):
-        pass
-
-class JointCoord(Coordinate):
-    def __init__(self, j1, j2, j3, j4, check=True):
-        """
-        Parameters
-        ----------
-        j1: float
-            肩の関節の中心を原点とし、前方を正とする座標軸のエンドエフェクタのモーター付け根部分の位置。単位はmm。
-        j2: float
-            アームから見て左側を正とする座標軸。
-        j3: float
-            上方を正とする座標軸。
-        j4: float
-            上から見て反時計回りを正とするエンドエフェクタの角度。単位は度数法。
-        check: bool
-            代入された値が可動域内かどうかを試験する（未実装）
-        """
-        object.__setattr__(self, "j1", j1)
-        object.__setattr__(self, "j2", j2)
-        object.__setattr__(self, "j3", j3)
-        if   j4 < -180: j4 += 360
-        elif j4 >  180: j4 -= 360
-        object.__setattr__(self, "j4", j4)
-        if check:
-            self.validate
-
-    def validate(self):
-        """ 可動域の外なら ValueError を排出する予定 """
-        pass
-
-    def insert_in(self, target, j1="j1", j2="j2", j3="j3", j4="j4"):
-        object.__setattr__(target, j1, self.j1)
-        object.__setattr__(target, j2, self.j2)
-        object.__setattr__(target, j3, self.j3)
-        object.__setattr__(target, j4, self.j4)
-        return target
-
-class CartesianCoord(Coordinate):
-    def __init__(self, x, y, z, r, check=True):
-        """
-        Parameters
-        ----------
-        x: float
-            肩の関節の中心を原点とし、前方を正とする座標軸のエンドエフェクタのモーター付け根部分の位置。単位はmm。
-        y: float
-            アームから見て左側を正とする座標軸。
-        z: float
-            上方を正とする座標軸。
-        r: float
-            上から見て反時計回りを正とするエンドエフェクタの角度。単位は度数法。
-        check: bool
-            代入された値が可動域内かどうかを試験する（未実装）
-        """
-        object.__setattr__(self, "x", x)
-        object.__setattr__(self, "y", y)
-        object.__setattr__(self, "z", z)
-        if   r < -180: r += 360
-        elif r >  180: r -= 360
-        object.__setattr__(self, "r", r)
-        if check:
-            self.validate
-
-    def insert_in(self, target, x="x", y="y", z="z", r="r"):
-        object.__setattr__(target, x, self.x)
-        object.__setattr__(target, y, self.y)
-        object.__setattr__(target, z, self.z)
-        object.__setattr__(target, r, self.r)
-        return target
-
-    def validate(self):
-        """ 可動域の外なら ValueError を排出する予定 """
-        pass
 
 class Dobot():
     """
@@ -200,7 +109,7 @@ class Dobot():
             True のとき即座に実行する
         """
         param = HomeParams()
-        param = coord.insert_in(param)
+        param = coord.infiltrate(param)
         return self.dobot.queue.send(API.SetHOMEParams, byref(param), imm=imm)
 
     # 情報取得
@@ -223,10 +132,26 @@ class Dobot():
             if counter > Dobot.LIM_COMMAND:  raise TimeoutError("timeout error with getting current command")
             sleep(0.5)
         return idx
-    def get_pose(self):
+    def get_pose_in_cartesian(self):
         """
-        現在のグリッパーの座標
+        現在のアームの手首部分の座標
 
+        Returns
+        -------
+        coord: CartesianCoord
+        """
+        return self._get_pose()[0]
+    def get_pose_in_joint(self):
+        """
+        現在の各関節の角度
+
+        Returns
+        -------
+        coord: CartesianCoord
+        """
+        return self._get_pose()[1]
+    def _get_pose(self):
+        """
         Returns
         -------
         pose: (CartesianCoord, JointCoord)
@@ -236,8 +161,7 @@ class Dobot():
         return (
             CartesianCoord(pose.x, pose.y, pose.z, pose.rHead, False),
             JointCoord(pose.joint1Angle, pose.joint2Angle,
-                       pose.joint3Angle, pose.joint4Angle, False)
-        )
+                       pose.joint3Angle, pose.joint4Angle, False) )
 
     # Dobot 動作
     def reset_home(self, *, imm=False):
@@ -464,7 +388,7 @@ class PTP(CommandModule):
         if not isinstance(mode, PTP.Mode):
             raise ValueError(mode["message"])
         cmd.ptpMode = mode.value
-        cmd = coord.insert_in(cmd, "x", "y", "z", "rHead")
+        cmd = coord.infiltrate(cmd, "x", "y", "z", "rHead")
         return self.dobot.queue.send(API.SetPTPCmd, byref(cmd), imm=imm)
     def move_to(self, point, relative=False, *, imm=False):
         """
