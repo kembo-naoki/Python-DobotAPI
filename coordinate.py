@@ -88,7 +88,7 @@ class CartesianAbsoluteCoordinate(CartesianCoordinate, AbsoluteCoordinate):
         object.__setattr__(target, r, self.r)
         return target
 
-class CrtesianRelativeCoordinate(CartesianCoordinate, RelativeCoordinate):
+class CartesianRelativeCoordinate(CartesianCoordinate, RelativeCoordinate):
     pass
 
 class JointAbsoluteCoordinate(JointCoordinate, AbsoluteCoordinate):

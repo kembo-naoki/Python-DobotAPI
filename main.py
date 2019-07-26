@@ -1,4 +1,4 @@
-from enum   import (Enum, auto)
+from abc    import (ABCMeta, abstractmethod)
 from time   import sleep
 from os     import path
 from ctypes import (cdll, create_string_buffer, Structure, byref,
@@ -6,10 +6,13 @@ from ctypes import (cdll, create_string_buffer, Structure, byref,
 
 from coordinate import ( Coordinate,
     CartesianAbsoluteCoordinate as CartesianCoord,
-    JointAbsoluteCoordinate as JointCoord )
+    CartesianRelativeCoordinate as CartesianVec,
+    JointAbsoluteCoordinate as JointCoord,
+    JointRelativeCoordinate as JointVec )
 
 _CUR_DIR = path.dirname( path.abspath( __file__ ) )
-API = cdll.LoadLibrary(_CUR_DIR + "/libDobotDll.so.1.0.0")
+#API = cdll.LoadLibrary(_CUR_DIR + "/libDobotDll.so.1.0.0")
+API = None
 
 class Dobot():
     """
@@ -37,8 +40,8 @@ class Dobot():
         self.is_connected = False
 
         self.queue = QueueController(self)
-        self.ptp = PTP(self)
-        self.io = IO(self)
+        self.arm = ArmController(self)
+        self.io = IOController(self)
 
         if logger is not None: self.logger = logger
 
@@ -72,10 +75,6 @@ class Dobot():
         self.send_cmd(API.SetQueuedCmdForceStopExec)
 
     # 接続／切断
-    def disconnect(self):
-        """ 切断 """
-        API.DisconnectDobot()
-        self.is_connected = False
     def connect(self):
         """ 接続 """
         if API.SearchDobot(create_string_buffer(1000),  1000) == 0:
@@ -97,117 +96,20 @@ class Dobot():
             raise DobotTimeout("timeout error with first connecting")
         else:
             raise RuntimeError("unknown error with first connecting")
-    def set_home_params(self, coord, *, imm=False):
-        """
-        ホームポジションの設定
+    def disconnect(self):
+        """ 切断 """
+        API.DisconnectDobot()
+        self.is_connected = False
 
-        Parameters
-        ----------
-        coord: CartesianCoord
-            ホームポジションのデカルト座標
-        imm: bool
-            True のとき即座に実行する
-        """
-        param = HomeParams()
-        param = coord.infiltrate(param)
-        return self.dobot.queue.send(API.SetHOMEParams, byref(param), imm=imm)
-
-    # 情報取得
-    def get_cur_cmd_index(self):
-        """
-        現在まで実行完了済のキューインデックス
-
-        Returns
-        -------
-        index: int
-        """
-        queued_cmd_index = c_uint64(0)
-        counter = 0
-        while True:
-            self.send_cmd(API.GetQueuedCmdCurrentIndex, byref(queued_cmd_index))
-            idx = queued_cmd_index.value
-            if idx <= self.last_cmd:  break
-
-            counter += 1
-            if counter > Dobot.LIM_COMMAND:  raise TimeoutError("timeout error with getting current command")
-            sleep(0.5)
-        return idx
-    def get_pose_in_cartesian(self):
-        """
-        現在のアームの手首部分の座標
-
-        Returns
-        -------
-        coord: CartesianCoord
-        """
-        return self._get_pose()[0]
-    def get_pose_in_joint(self):
-        """
-        現在の各関節の角度
-
-        Returns
-        -------
-        coord: CartesianCoord
-        """
-        return self._get_pose()[1]
-    def _get_pose(self):
-        """
-        Returns
-        -------
-        pose: (CartesianCoord, JointCoord)
-        """
-        pose = Pose()
-        self.send_cmd(API.GetPose, byref(pose))
-        return (
-            CartesianCoord(pose.x, pose.y, pose.z, pose.rHead, False),
-            JointCoord(pose.joint1Angle, pose.joint2Angle,
-                       pose.joint3Angle, pose.joint4Angle, False) )
-
-    # Dobot 動作
-    def reset_home(self, *, imm=False):
-        """
-        ホームポジションリセット
-        imm: bool
-            True のとき即座に実行する
-        """
-        cmd = HOMECmd()
-        cmd.temp = 0
-        return self.queue.send(API.SetHOMECmd, byref(cmd), imm=imm)
-    def wait(self, ms, *, imm=False):
-        """
-        待機命令
-
-        Parameters
-        ----------
-        ms: int
-            待機時間（ミリ秒）
-        imm: bool
-            True のとき即座に実行する
-        """
-        cmd = WAITCmd()
-        cmd.waitTime = ms
-        return self.queue.send(API.SetWAITCmd, byref(cmd), imm=imm)
-
-    def open_gripper(self, *, imm=False):
-        """ グリッパーを開く """
-        self.queue.send(API.SetEndEffectorGripper, 1, 0, imm=imm)
-        return self.wait(Dobot.INTERVAL_GRIP)
-    def close_gripper(self, *, imm=False):
-        """ グリッパーを閉じる """
-        self.queue.send(API.SetEndEffectorGripper, 1, 1, imm=imm)
-        return self.wait(Dobot.INTERVAL_GRIP)
-    def stop_pump(self, *, imm=False):
-        """ ポンプの停止 """
-        return self.queue.send(API.SetEndEffectorSuctionCup, 1, 0, imm=imm)
-    
 class CommandModule(metaclass=ABCMeta):
     """ Dobot の機能毎のクラス """
+    @abstractmethod
     def __init__(self, dobot):
         self.dobot = dobot
         self.check_list = {}
         self.requirements = ()
     
-    def check_settings(self, opts=()):
+    def check_settings(self, *opts):
         """ このコマンドが送信可能か否か """ 
         req_list = self.requirements + opts
         message = None
@@ -220,6 +122,7 @@ class CommandModule(metaclass=ABCMeta):
                 message = "need setting by `" + req + "` method"
         if message is not None:
             raise RuntimeError(message)
+        return True
 
 class QueueController(CommandModule):
     def __init__(self, dobot):
@@ -269,350 +172,117 @@ class QueueController(CommandModule):
         self.dobot.send_cmd(API.SetQueuedCmdStopExec)
         self.enable = False
 
-class PTP(CommandModule):
+    def get_current_index(self):
+        """
+        現在まで実行完了済のキューインデックス
+
+        Returns
+        -------
+        index: int
+        """
+        queued_cmd_index = c_uint64(0)
+        counter = 0
+        while True:
+            self.send_cmd(API.GetQueuedCmdCurrentIndex, byref(queued_cmd_index))
+            index = queued_cmd_index.value
+            if index <= self.last_cmd:  break
+
+            counter += 1
+            if counter > Dobot.LIM_COMMAND:  raise TimeoutError("timeout error with getting current command")
+            sleep(0.5)
+        return index
+
+class ArmController(CommandModule):
+    """ アーム関連のコマンド群 """
     def __init__(self, dobot):
         self.dobot = dobot
-        self.check_list = {
-            "joint_prms": False,
-            "common_ratio": False }
-        self.requirements = ("joint_prms", "common_ratio")
-    def set_joint_prms(self, vel, acc, *, imm=False):
+        self.ptp = PTPCommands(dobot)
+        self.move_to = self.ptp.move_to
+
+    def set_home_params(self, coord, *, imm=False):
         """
-        PTP コマンドのモーター毎の速度加速度の設定
+        ホームポジションの設定
 
         Parameters
         ----------
-        vel: list of float
-            J1, J2, J3, J4 の各モーターの最高速度。単位はmm/s(0-500)
-        acc: list of float
-            J1, J2, J3, J4 の各モーターの加速度。単位はmm/s(0-500)
-        imm: bool
-            即座に実行する
-        """
-        param = PTPJointParams()
-        param.joint1Velocity = vel[0]
-        param.joint2Velocity = vel[1]
-        param.joint3Velocity = vel[2]
-        param.joint4Velocity = vel[3]
-        param.joint1Acceleration = acc[0]
-        param.joint2Acceleration = acc[1]
-        param.joint3Acceleration = acc[2]
-        param.joint4Acceleration = acc[3]
-        self.dobot.queue.send(API.SetPTPJointParams, byref(param), imm=imm)
-        self.check_list["joint_prms"] = True
-    def set_common_ratio(self, vel, acc, *, imm=False):
-        """
-        PTP コマンド使用時の速度倍率設定
-
-        Parameters
-        ----------
-        vel: float
-            速度の倍率。(0%-100%)
-        acc: float
-            加速度の倍率。(0%-100%)
-        imm: bool
-            即座に実行する
-        """
-        param = PTPCommonParams()
-        param.velocityRatio = vel
-        param.accelerationRatio = acc
-        self.dobot.queue.send(API.SetPTPCommonParams, byref(param), imm=imm)
-        self.check_list["common_ratio"] = True
-
-    class Mode(Enum):
-        JUMP_XYZ   = 0
-        MOVJ_XYZ   = 1
-        MOVL_XYZ   = 2
-        JUMP_ANGLE = 3
-        MOVJ_ANGLE = 4
-        MOVL_ANGLE = 5
-        MOVJ_INC   = 6
-        MOVL_INC   = 7
-        MOVJ_XYZ_INC = 8
-        JUMP_MOVL_XYZ= 9
-    class RouteMode(Enum):
-        REGARDLESS = auto()
-        LINEAR = auto()
-        JUMP = auto()
-    MODE_LIST = {
-        RouteMode.REGARDLESS: {
-            CartesianCoord: {
-                "absolute": Mode.MOVJ_XYZ,
-                "relative": Mode.MOVJ_XYZ_INC
-            },
-            JointCoord: {
-                "absolute": Mode.MOVJ_ANGLE,
-                "relative": Mode.MOVJ_INC
-            }
-        },
-        RouteMode.LINEAR: {
-            CartesianCoord: {
-                "absolute": Mode.MOVL_XYZ,
-                "relative": Mode.MOVL_INC
-            },
-            JointCoord: {
-                "absolute": Mode.MOVL_ANGLE,
-                "relative": {"message": "You can't use `relative` mode with `JointCoordinate`."}
-            }
-        },
-        RouteMode.JUMP: {
-            CartesianCoord: {
-                "absolute": Mode.JUMP_XYZ,
-                "relative": Mode.JUMP_MOVL_XYZ
-            },
-            JointCoord: {
-                "absolute": Mode.JUMP_ANGLE,
-                "relative": {"message": "You can't use `relative` mode with `JointCoordinate`."}
-            }
-        }
-    }
-    def _exec(self, coord, route_mode, relative, *, imm=False):
-        """
-        アームを特定の座標まで動かす。
-
-        Parameters
-        ----------
-        coord: Coordinate
-        route_mode: PTP.Mode
-        relative: bool
+        coord: CartesianCoord
+            ホームポジションのデカルト座標
         imm: bool
             True のとき即座に実行する
+        """
+        param = HomeParams()
+        param = coord.infiltrate(param)
+        return self.dobot.queue.send(API.SetHOMEParams, byref(param), imm=imm)
+
+    # 情報取得
+    def _get_pose(self):
+        """
+        Returns
+        -------
+        pose: (CartesianCoord, JointCoord)
+        """
+        pose = Pose()
+        self.send_cmd(API.GetPose, byref(pose))
+        return (
+            CartesianCoord(pose.x, pose.y, pose.z, pose.rHead, False),
+            JointCoord(pose.joint1Angle, pose.joint2Angle,
+                       pose.joint3Angle, pose.joint4Angle, False) )
+
+    def get_pose_in_cartesian(self):
+        """
+        現在のアームの手首部分の座標
 
         Returns
         -------
-        cmd_index: int
+        coord: CartesianCoord
         """
-        cmd = PTPCmd()
-        pos = "relative" if relative else "absolute"
-        mode = PTP.MODE_LIST[route_mode][type(coord)][pos]
-        if not isinstance(mode, PTP.Mode):
-            raise ValueError(mode["message"])
-        cmd.ptpMode = mode.value
-        cmd = coord.infiltrate(cmd, "x", "y", "z", "rHead")
-        return self.dobot.queue.send(API.SetPTPCmd, byref(cmd), imm=imm)
-    def move_to(self, point, relative=False, *, imm=False):
+        return self._get_pose()[0]
+    def get_pose_in_joint(self):
         """
-        アームを特定の座標まで任意の経路で動かす。
-
-        Parameters
-        ----------
-        point: Coordinate
-            目的地
-        relative: bool
-            True ならば point を相対座標として動かす。
-        imm: bool
-            True のとき即座に実行する
+        現在の各関節の角度
 
         Returns
         -------
-        cmd_index: int
+        coord: CartesianCoord
         """
-        return self._exec(point, PTP.RouteMode.REGARDLESS, relative)
-    def move_linearly(self, point, relative=False, *, imm=False):
+        return self._get_pose()[1]
+
+    # Dobot 動作
+    def reset_home(self, *, imm=False):
         """
-        アームを特定の座標まで一直線に動かす。
-
-        Parameters
-        ----------
-        point: Coordinate
-            目的地
-        relative: bool
-            True ならば point を相対座標として動かす。
-        imm: bool
-            True のとき即座に実行する
-
-        Returns
-        -------
-        cmd_index: int
-        """
-        return self._exec(point, PTP.RouteMode.LINEAR, relative)
-    def jump_to(self, point, relative=False, *, imm=False):
-        """
-        アームを特定の座標まで一度持ち上げてから下ろすような経路で動かす。
-
-        Parameters
-        ----------
-        point: Coordinate
-            目的地
-        relative: bool
-            True ならば point を相対座標として動かす。
-        imm: bool
-            True のとき即座に実行する
-
-        Returns
-        -------
-        cmd_index: int
-        """
-        return self._exec(point, PTP.RouteMode.JUMP, relative)
-
-class IO(CommandModule):
-    class Mode(Enum):
-        INVALID = 0
-        LEVEL_OUTPUT = 1
-        PWM_OUTPUT = 2
-        LEVEL_INPUT = 3
-        AD_INPUT = 4
-        # PULLUP_INPUT = 5
-        # PULLDOWN_INPUT = 6
-    def __init__(self, dobot):
-        self.dobot = dobot
-        # 設定用の仮の定数
-        LvOut = IO.Mode.LEVEL_OUTPUT
-        LvIn  = IO.Mode.LEVEL_INPUT
-        PWM   = IO.Mode.PWM_OUTPUT
-        ADC   = IO.Mode.AD_INPUT
-        # ベース部分のインターフェイス
-        self.uart = UART(dobot, E1=Pin(dobot, 19, 3.3, [LvIn]),
-                                E2=Pin(dobot, 18, 3.3, [LvOut]),
-                                STOP_KEY=Pin(dobot, 20, 3.3, [LvIn]))
-        self.gp1 = GPOfBase(dobot, REV=Pin(dobot, 10, 5.0, [LvOut]),
-                                   PWM=Pin(dobot, 11, 3.3, [LvOut, PWM]),
-                                   ADC=Pin(dobot, 12, 3.3, [LvIn]))
-        self.gp2 = GPOfBase(dobot, REV=Pin(dobot, 13, 5.0, [LvOut]),
-                                   PWM=Pin(dobot, 14, 3.3, [LvOut, LvIn, PWM]),
-                                   ADC=Pin(dobot, 15, 3.3, [LvOut, LvIn, ADC]))
-        self.sw1 = SW1(dobot, VALVE=Pin(dobot, 16, 12, [LvOut]))
-        self.sw2 = SW2(dobot, PUMP=Pin(dobot, 16, 12, [LvOut]))
-        # アーム部分のインターフェイス
-        self.gp3 = GPOfArm(dobot, PWM=Pin(dobot, 8, 3.3, [LvOut, PWM]),
-                                  ADC=Pin(dobot, 9, 3.3, [LvOut, LvIn, ADC]))
-        self.gp4 = GPOfArm(dobot, PWM=Pin(dobot, 6, 3.3, [LvOut, PWM]),
-                                  ADC=Pin(dobot, 7, 3.3, [LvIn]))
-        self.gp5 = GPOfArm(dobot, PWM=Pin(dobot, 4, 3.3, [LvOut, PWM]),
-                                  ADC=Pin(dobot, 5, 3.3, [LvIn]))
-        self.sw3 = SW3(dobot, HEAT_12V=Pin(dobot, 3, 12, [LvOut]))
-        self.sw4 = SW4(dobot, FAN_12V=Pin(dobot, 2, 12, [LvOut]))
-        self.analog = ANALOG(dobot, Temp=Pin(dobot, 1, 3.3, [LvOut, LvIn, ADC]))
-
-class Interface(CommandModule):
-    def __init__(self, dobot, **kwargs):
-        self.dobot = dobot
-        self.PINS_BY_POS = {}
-        for label in kwargs:
-            if not label in self.PIN_POS:
-                raise TypeError(str(type(self))+" Interface doesn't have `"+label+"` Pin")
-            pin = kwargs[label]
-            setattr(self, label, pin)
-            self.PINS_BY_POS[self.PIN_POS[label]] = pin
-        if len(kwargs) < len(self.PIN_POS):
-            raise TypeError(str(type(self))+" Interface is missing any pin")
-    def __getitem__(self, key):
-        return self.PINS_BY_POS[key]
-UART = type("UART", Interface, { "PIN_POS": {"E1": 8, "E2": 3, "STOP_KEY": 7} })
-SW1  = type("SW1",  Interface, { "PIN_POS": {"VALVE": 1} })
-SW2  = type("SW2",  Interface, { "PIN_POS": {"PUMP":  1} })
-SW4  = type("SW4",  Interface, { "PIN_POS": {"FAN_12V": 1} })
-GPOfBase = type("GPOfBase", Interface, { "PIN_POS": {"REV": 1, "PWM": 2, "ADC": 3} })
-GPOfArm  = type("GPOfArm",  Interface, { "PIN_POS": {"PWM": 2, "ADC": 3} })
-ANALOG   = type("ANALOG",   Interface, { "PIN_POS": {"Temp": 1} })
-class SW3(Interface):
-    def __init__(self, dobot, HEAT_12V):
-        self.dobot = dobot
-        pin = HEAT_12V
-        self.HEAT_12V = pin
-        self.PINS_BY_POS = {2: pin, 3: pin}
-
-class Pin(CommandModule):
-    def __init__(self, dobot, address, volt, permission=[]):
-        """
-        Parameters
-        ----------
-        dobot: Dobot
-        address: int
-        volt: float
-        permission: list of IO.Mode
-        """
-        self.ADDRESS = address
-        self.VOLT = volt
-        self.PERMISSION = set([IO.Mode.INVALID]+permission)
-        self.dobot = dobot
-        self.mode = None
-    def config(self, mode, *, imm=False):
-        """
-        I/O モードの設定
-
-        Parameters
-        ----------
-        mode: IO.Mode
+        ホームポジションリセット
         imm: bool
             True のとき即座に実行する
         """
-        if not mode in self.PERMISSION:
-            raise ValueError("this mode is not supported ("+mode._name_+")")
-        cmd = IOMultiplexing()
-        cmd.address = self.ADDRESS
-        cmd.mode = mode.value
-        result = self.dobot.queue.send(API.SetIOMultiplexing, byref(cmd), imm=imm)
-        pin.set_mode(mode)
-        return result
-    def check_mode(self, mode):
-        if self.mode is not mode:
-            raise RuntimeError("This pin is not mode `"+mode._name_+"`")
-    # Output
-    def level_out(self, level, *, imm=False):
+        cmd = HOMECmd()
+        cmd.temp = 0
+        return self.queue.send(API.SetHOMECmd, byref(cmd), imm=imm)
+    def wait(self, ms, *, imm=False):
         """
-        このピンの出力 ON / OFF
+        待機命令
 
         Parameters
         ----------
-        level: bool
+        ms: int
+            待機時間（ミリ秒）
         imm: bool
             True のとき即座に実行する
         """
-        self.check_mode(IO.Mode.LEVEL_OUTPUT)
-        cmd = IODO()
-        cmd.address = self.ADDRESS
-        cmd.level   = int(level)
-        return self.dobot.queue.send(API.SetIODO, byref(cmd), imm=imm)
-    def pwm_out(self, freq, duty, *, imm=False):
-        """
-        このピンの PWM 出力
+        cmd = WAITCmd()
+        cmd.waitTime = ms
+        return self.queue.send(API.SetWAITCmd, byref(cmd), imm=imm)
 
-        Parameters
-        ----------
-        freq: float
-            周波数(10-1,000,000Hz)
-        duty: float
-            デューティ比(0-100%)
-        imm: bool
-            True のとき即座に実行する
-        """
-        self.check_mode(IO.Mode.PWM_OUTPUT)
-        cmd = IOPWM()
-        cmd.address = self.ADDRESS
-        cmd.frequency = freq
-        cmd.dutyCycle = duty
-        return self.dobot.queue.send(API.SetIOPWM, byref(cmd), imm=imm)
-    # Input
-    def get_level(self):
-        """
-        このピンへの入力
-
-        Returns
-        -------
-        level: bool
-        """
-        self.check_mode(IO.Mode.LEVEL_INPUT)
-        cmd = IODO()
-        cmd.address = self.ADDRESS
-        cmd.level   = 0
-        self.dobot.send_cmd(API.GetIODI, byref(cmd))
-        return (cmd.level == 1)
-    def get_value(self):
-        """
-        このピンへのアナログ入力
-
-        Returns
-        -------
-        value: int
-            0-4095
-        """
-        self.check_mode(IO.Mode.AD_INPUT)
-        cmd = IOADC()
-        cmd.address = self.ADDRESS
-        cmd.value = 0
-        self.dobot.send_cmd(API.GetIOADC, byref(cmd))
-        return cmd.value
+    def open_gripper(self, *, imm=False):
+        """ グリッパーを開く """
+        self.queue.send(API.SetEndEffectorGripper, 1, 0, imm=imm)
+        return self.wait(Dobot.INTERVAL_GRIP)
+    def close_gripper(self, *, imm=False):
+        """ グリッパーを閉じる """
+        self.queue.send(API.SetEndEffectorGripper, 1, 1, imm=imm)
+        return self.wait(Dobot.INTERVAL_GRIP)
+    def stop_pump(self, *, imm=False):
+        """ ポンプの停止 """
+        return self.queue.send(API.SetEndEffectorSuctionCup, 1, 0, imm=imm)
 
 # エラー
 class DobotError(Exception):
@@ -657,54 +327,4 @@ class WAITCmd(Structure):
     _fields_ = [
         ("waitTime", c_uint32)
         ]
-
-class PTPJointParams(Structure):
-    _fields_ = [
-        ("joint1Velocity", c_float),
-        ("joint2Velocity", c_float),
-        ("joint3Velocity", c_float),
-        ("joint4Velocity", c_float),
-        ("joint1Acceleration", c_float),
-        ("joint2Acceleration", c_float),
-        ("joint3Acceleration", c_float),
-        ("joint4Acceleration", c_float) ]
-class PTPCommonParams(Structure):
-    _pack_ = 1
-    _fields_ = [
-        ("velocityRatio", c_float),
-        ("accelerationRatio", c_float) ]
-class PTPCmd(Structure):
-    _pack_ = 1
-    _fields_ = [
-        ("ptpMode", c_byte),
-        ("x", c_float),
-        ("y", c_float),
-        ("z", c_float),
-        ("rHead", c_float) ]
-
-class IOMultiplexing(Structure):
-    _pack_ = 1
-    _fields_ = [
-        ("address", c_byte),
-        ("mode", c_byte)
-    ]
-class IODO(Structure):
-    _pack_ = 1
-    _fields_ = [
-        ("address", c_byte),
-        ("level", c_byte)
-    ]
-class IOPWM(Structure):
-    _pack_ = 1
-    _fields_ = [
-        ("address", c_byte),
-        ("frequency", c_float),
-        ("dutyCycle", c_float)
-    ]
-class IOADC(Structure):
-    _pack_ = 1
-    _fields_ = [
-        ("address", c_byte),
-        ("value", c_ushort)
-    ]
 
