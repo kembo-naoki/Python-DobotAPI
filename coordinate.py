@@ -1,15 +1,39 @@
 from abc import (ABCMeta, abstractmethod)
+from collections.abc import Mapping
 
 # Abstract Classes
+def private_var_name(cls, name):
+    if not isinstance(cls, type):
+        cls = cls.__class__
+    return f"_{cls.__name__}__{name}"
 
-class Coordinate(metaclass=ABCMeta):
-    def __setattr__(self, name, value):
-        raise TypeError("Class `Coordinate` does not support attribute assignment.")
+class Coordinate(Mapping, metaclass=ABCMeta):
+    AXES = tuple()
+
+    def __getitem__(self, key):
+        if key in self.AXES:
+            return getattr(self, private_var_name(self, key))
+        else:
+            raise KeyError()
+    
+    def __iter__(self):
+        return iter(self.AXES)
+    
+    def __len__(self):
+        return len(self.AXES)
     
     @abstractmethod
-    def __init__(self, *args, **kwargs):
-        raise TypeError("This class is abstract class.")
-
+    def __init__(self, *args):
+        if len(args) != len(self.AXES):
+            raise TypeError(f"{self.__class__.__name__}() takes exactly {len(self.AXES)} axis ({len(args)} given)")
+        while args[-1] < -180: args[-1] += 360
+        while args[-1] > +180: args[-1] -= 360
+        for axis, arg in zip(self.AXES, args):
+            setattr(self, "__" + axis, arg)
+    def __set_props(self):
+        for axis in self.AXES:
+            setattr(self.__class__, axis, property(lambda self: self[axis]))
+    
     #@abstractmethod
     def __add__(self, other):
         pass
@@ -23,40 +47,48 @@ class Coordinate(metaclass=ABCMeta):
     def __div__(self, val):
         pass
 
-class AbsoluteCoordinate(metaclass=ABCMeta):
-    @abstractmethod
+class AbsoluteCoordinate(Coordinate, metaclass=ABCMeta):
+    #@abstractmethod
     def validate(self):
-        """ 可動域のチェック """
+        """ 可動域の中かどうかを返す関数 """
         pass
-    @abstractmethod
+
     def infiltrate(self, target, labels):
-        """ API用の構造体に自分の値を挿入 """
-        pass
+        """
+        API用の構造体に自分の値を挿入
+
+        Parameters
+        ----------
+        target: ctypes.Structure
+            挿入するための構造体
+        labels: dict
+            軸の名称をキーとして、構造体のラベルを代入
+        """
+        for axis in self.AXES:
+            if axis in labels:
+                setattr(target, labels[axis], self[axis])
+            else:
+                setattr(target, axis, self[axis])
+        return target
 
 class RelativeCoordinate(metaclass=ABCMeta):
     pass
 
 class CartesianCoordinate(Coordinate, metaclass=ABCMeta):
-    def __init__(self, x, y, z, r):
-        object.__setattr__(self, "x", x)
-        object.__setattr__(self, "y", y)
-        object.__setattr__(self, "z", z)
-        if   r < -180: r += 360
-        elif r >  180: r -= 360
-        object.__setattr__(self, "r", r)
+    AXES = ("x", "y", "z", "r")
+
+    def __init__(self, x, y, z, r=0):
+        super().__init__(x, y, z, r)
 
     def scalar_product(self, other):
         pass
 
 
 class JointCoordinate(Coordinate, metaclass=ABCMeta):
+    AXES = ("j1", "j2", "j3", "j4")
+
     def __init__(self, j1, j2, j3, j4):
-        object.__setattr__(self, "j1", j1)
-        object.__setattr__(self, "j2", j2)
-        object.__setattr__(self, "j3", j3)
-        if   j4 < -180: j4 += 360
-        elif j4 >  180: j4 -= 360
-        object.__setattr__(self, "j4", j4)
+        super().__init__(j1, j2, j3, j4)
 
 
 # Partical Classes
@@ -81,13 +113,6 @@ class CartesianAbsoluteCoordinate(CartesianCoordinate, AbsoluteCoordinate):
         if check:
             self.validate
 
-    def infiltrate(self, target, x="x", y="y", z="z", r="r"):
-        object.__setattr__(target, x, self.x)
-        object.__setattr__(target, y, self.y)
-        object.__setattr__(target, z, self.z)
-        object.__setattr__(target, r, self.r)
-        return target
-
 class CartesianRelativeCoordinate(CartesianCoordinate, RelativeCoordinate):
     pass
 
@@ -111,17 +136,5 @@ class JointAbsoluteCoordinate(JointCoordinate, AbsoluteCoordinate):
             raise ValueError("This position is invalid")
         super().__init__(j1, j2, j3, j4)
 
-    def validate(self):
-        """ 可動域の中かどうかを返す関数 """
-        pass
-
-    def infiltrate(self, target, j1="j1", j2="j2", j3="j3", j4="j4"):
-        object.__setattr__(target, j1, self.j1)
-        object.__setattr__(target, j2, self.j2)
-        object.__setattr__(target, j3, self.j3)
-        object.__setattr__(target, j4, self.j4)
-        return target
-
 class JointRelativeCoordinate(JointCoordinate, RelativeCoordinate):
     pass
-
