@@ -1,18 +1,15 @@
-from abc    import (ABCMeta, abstractmethod)
 from time   import sleep
-from os     import path
-from ctypes import (cdll, create_string_buffer, Structure, byref,
+from ctypes import (create_string_buffer, Structure, byref,
                     c_uint64, c_uint32, c_ushort, c_float, c_byte)
 
-from coordinate import ( Coordinate,
-    CartesianAbsoluteCoordinate as CartesianCoord,
-    CartesianRelativeCoordinate as CartesianVec,
-    JointAbsoluteCoordinate as JointCoord,
-    JointRelativeCoordinate as JointVec )
-
-_CUR_DIR = path.dirname( path.abspath( __file__ ) )
-#API = cdll.LoadLibrary(_CUR_DIR + "/libDobotDll.so.1.0.0")
-API = None
+from base import (API, CommandModule)
+from coordinate import (Coordinate,
+                        CartesianAbsoluteCoordinate as CartesianCoord,
+                        CartesianRelativeCoordinate as CartesianVec,
+                        JointAbsoluteCoordinate     as JointCoord,
+                        JointRelativeCoordinate     as JointVec)
+from ptp  import MoveController
+from gpio import IOController
 
 class Dobot():
     """
@@ -100,29 +97,6 @@ class Dobot():
         """ 切断 """
         API.DisconnectDobot()
         self.is_connected = False
-
-class CommandModule(metaclass=ABCMeta):
-    """ Dobot の機能毎のクラス """
-    @abstractmethod
-    def __init__(self, dobot):
-        self.dobot = dobot
-        self.check_list = {}
-        self.requirements = ()
-    
-    def check_settings(self, *opts):
-        """ このコマンドが送信可能か否か """ 
-        req_list = self.requirements + opts
-        message = None
-        for req in req_list:
-            if isinstance(req, tuple):
-                if not any(self.check_list[k] for k in req):
-                    message  = "need setting by at least one method of ("
-                    message += ", ".join("set_"+name for name in req) + ")"
-            elif not self.check_list[req]:
-                message = "need setting by `" + req + "` method"
-        if message is not None:
-            raise RuntimeError(message)
-        return True
 
 class QueueController(CommandModule):
     def __init__(self, dobot):

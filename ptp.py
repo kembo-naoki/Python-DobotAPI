@@ -1,7 +1,7 @@
 from enum   import (Enum, auto)
 from ctypes import (Structure, byref, c_float, c_byte)
 
-from main import (CommandModule, API)
+from base import (CommandModule, API)
 from coordinate import *
 
 class MoveController(CommandModule):
@@ -79,7 +79,7 @@ class MoveController(CommandModule):
         imm: bool
             即座に実行する
         """
-        param = MoveControllerJointParams()
+        param = PTPJointParams()
         param.joint1Velocity = vel[0]
         param.joint2Velocity = vel[1]
         param.joint3Velocity = vel[2]
@@ -104,7 +104,7 @@ class MoveController(CommandModule):
         imm: bool
             即座に実行する
         """
-        param = MoveControllerCommonParams()
+        param = PTPCommonParams()
         param.velocityRatio = vel
         param.accelerationRatio = acc
         self.dobot.queue.send(API.SetMoveControllerCommonParams, byref(param), imm=imm)
@@ -165,7 +165,7 @@ class MoveController(CommandModule):
         elif isinstance(point, dict):
             if relative is None:
                 relative = False
-            if all(axis in point for axis in AXES_LIST["Cartesian"]):
+            if all(axis in point for axis in self.AXES_LIST["Cartesian"]):
                 if relative:
                     point = CartesianRelativeCoordinate(**point)
                 else:

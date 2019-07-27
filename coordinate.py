@@ -10,16 +10,16 @@ class Coordinate(metaclass=ABCMeta):
     def __init__(self, *args, **kwargs):
         raise TypeError("This class is abstract class.")
 
-    @abstractmethod
+    #@abstractmethod
     def __add__(self, other):
         pass
-    @abstractmethod
+    #@abstractmethod
     def __sub__(self, other):
         pass
-    @abstractmethod
+    #@abstractmethod
     def __mul__(self, val):
         pass
-    @abstractmethod
+    #@abstractmethod
     def __div__(self, val):
         pass
 
