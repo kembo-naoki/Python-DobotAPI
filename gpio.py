@@ -1,6 +1,7 @@
+from ctypes import (Structure, c_byte, c_float, c_ushort)
 from enum   import Enum
 
-from main import (CommandModule, API)
+from base import (CommandModule, API)
 
 class IOController(CommandModule):
     class Mode(Enum):
@@ -55,13 +56,13 @@ class Interface(CommandModule):
             raise TypeError(str(type(self))+" Interface is missing any pin")
     def __getitem__(self, key):
         return self.PINS_BY_POS[key]
-UART = type("UART", Interface, { "PIN_POS": {"E1": 8, "E2": 3, "STOP_KEY": 7} })
-SW1  = type("SW1",  Interface, { "PIN_POS": {"VALVE": 1} })
-SW2  = type("SW2",  Interface, { "PIN_POS": {"PUMP":  1} })
-SW4  = type("SW4",  Interface, { "PIN_POS": {"FAN_12V": 1} })
-GPOfBase = type("GPOfBase", Interface, { "PIN_POS": {"REV": 1, "PWM": 2, "ADC": 3} })
-GPOfArm  = type("GPOfArm",  Interface, { "PIN_POS": {"PWM": 2, "ADC": 3} })
-ANALOG   = type("ANALOG",   Interface, { "PIN_POS": {"Temp": 1} })
+UART = type("UART", (Interface,), { "PIN_POS": {"E1": 8, "E2": 3, "STOP_KEY": 7} })
+SW1  = type("SW1",  (Interface,), { "PIN_POS": {"VALVE": 1} })
+SW2  = type("SW2",  (Interface,), { "PIN_POS": {"PUMP":  1} })
+SW4  = type("SW4",  (Interface,), { "PIN_POS": {"FAN_12V": 1} })
+GPOfBase = type("GPOfBase", (Interface,), { "PIN_POS": {"REV": 1, "PWM": 2, "ADC": 3} })
+GPOfArm  = type("GPOfArm",  (Interface,), { "PIN_POS": {"PWM": 2, "ADC": 3} })
+ANALOG   = type("ANALOG",   (Interface,), { "PIN_POS": {"Temp": 1} })
 class SW3(Interface):
     def __init__(self, dobot, HEAT_12V):
         self.dobot = dobot
