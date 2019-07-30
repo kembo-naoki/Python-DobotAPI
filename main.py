@@ -21,7 +21,6 @@ class Dobot():
         グリッパーの開閉のための待ち時間(ms)
     LIM_COMMAND: int
         コマンド送信失敗時のリトライ回数
-    PTP_MODE: int
     """
 
     INTERVAL_CMD = 0.005
@@ -157,7 +156,7 @@ class QueueController(CommandModule):
         queued_cmd_index = c_uint64(0)
         counter = 0
         while True:
-            self.send_cmd(API.GetQueuedCmdCurrentIndex, byref(queued_cmd_index))
+            self.dobot.send_cmd(API.GetQueuedCmdCurrentIndex, byref(queued_cmd_index))
             index = queued_cmd_index.value
             if index <= self.last_cmd:  break
 
@@ -170,8 +169,8 @@ class ArmController(CommandModule):
     """ アーム関連のコマンド群 """
     def __init__(self, dobot):
         self.dobot = dobot
-        self.ptp = PTPCommands(dobot)
-        self.move_to = self.ptp.move_to
+        self.movement = MoveController(dobot)
+        self.move_to = self.movement.exec
 
     def set_home_params(self, coord, *, imm=False):
         """
@@ -196,7 +195,7 @@ class ArmController(CommandModule):
         pose: (CartesianCoord, JointCoord)
         """
         pose = Pose()
-        self.send_cmd(API.GetPose, byref(pose))
+        self.dobot.send_cmd(API.GetPose, byref(pose))
         return (
             CartesianCoord(pose.x, pose.y, pose.z, pose.rHead, False),
             JointCoord(pose.joint1Angle, pose.joint2Angle,
@@ -230,7 +229,7 @@ class ArmController(CommandModule):
         """
         cmd = HOMECmd()
         cmd.temp = 0
-        return self.queue.send(API.SetHOMECmd, byref(cmd), imm=imm)
+        return self.dobot.queue.send(API.SetHOMECmd, byref(cmd), imm=imm)
     def wait(self, ms, *, imm=False):
         """
         待機命令
@@ -244,19 +243,19 @@ class ArmController(CommandModule):
         """
         cmd = WAITCmd()
         cmd.waitTime = ms
-        return self.queue.send(API.SetWAITCmd, byref(cmd), imm=imm)
+        return self.dobot.queue.send(API.SetWAITCmd, byref(cmd), imm=imm)
 
     def open_gripper(self, *, imm=False):
         """ グリッパーを開く """
-        self.queue.send(API.SetEndEffectorGripper, 1, 0, imm=imm)
+        self.dobot.queue.send(API.SetEndEffectorGripper, 1, 0, imm=imm)
         return self.wait(Dobot.INTERVAL_GRIP)
     def close_gripper(self, *, imm=False):
         """ グリッパーを閉じる """
-        self.queue.send(API.SetEndEffectorGripper, 1, 1, imm=imm)
+        self.dobot.queue.send(API.SetEndEffectorGripper, 1, 1, imm=imm)
         return self.wait(Dobot.INTERVAL_GRIP)
     def stop_pump(self, *, imm=False):
         """ ポンプの停止 """
-        return self.queue.send(API.SetEndEffectorSuctionCup, 1, 0, imm=imm)
+        return self.dobot.queue.send(API.SetEndEffectorSuctionCup, 1, 0, imm=imm)
 
 # エラー
 class DobotError(Exception):

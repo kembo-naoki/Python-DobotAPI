@@ -1,4 +1,4 @@
-from enum   import (Enum, auto)
+from enum   import Enum
 from ctypes import (Structure, byref, c_float, c_byte)
 
 from base import (CommandModule, API)
@@ -17,9 +17,9 @@ class MoveController(CommandModule):
         MOVJ_XYZ_INC = 8
         JUMP_MOVL_XYZ= 9
     class RouteMode(Enum):
-        REGARDLESS = auto()
-        LINEAR = auto()
-        JUMP = auto()
+        REGARDLESS = 0
+        LINEAR     = 1
+        JUMP       = 2
     
     AXES_LIST = {
         "Cartesian": ("x", "y", "z", "r"),
@@ -135,7 +135,7 @@ class MoveController(CommandModule):
         cmd = coord.infiltrate(cmd, "x", "y", "z", "rHead")
         return self.dobot.queue.send(API.SetMoveControllerCmd, byref(cmd), imm=imm)
 
-    def move_to(self, point, relative=None, *,mode=RouteMode.REGARDLESS , imm=False):
+    def exec(self, point, relative=None, *,mode=RouteMode.REGARDLESS , imm=False):
         """
         アームを特定の座標まで任意の経路で動かす。
 

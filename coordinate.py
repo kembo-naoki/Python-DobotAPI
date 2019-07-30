@@ -5,7 +5,7 @@ from collections.abc import Mapping
 def private_var_name(cls, name):
     if not isinstance(cls, type):
         cls = cls.__class__
-    return f"_{cls.__name__}__{name}"
+    return "_" + cls.__name__ + "__" + name
 
 class Coordinate(Mapping, metaclass=ABCMeta):
     AXES = tuple()
@@ -25,7 +25,9 @@ class Coordinate(Mapping, metaclass=ABCMeta):
     @abstractmethod
     def __init__(self, *args):
         if len(args) != len(self.AXES):
-            raise TypeError(f"{self.__class__.__name__}() takes exactly {len(self.AXES)} axis ({len(args)} given)")
+            message  = self.__class__.__name__+"() takes exactly "
+            message += str(len(self.AXES))+" axis ("+str(len(args))+" given)"
+            raise TypeError(message)
         while args[-1] < -180: args[-1] += 360
         while args[-1] > +180: args[-1] -= 360
         for axis, arg in zip(self.AXES, args):
@@ -53,7 +55,7 @@ class AbsoluteCoordinate(Coordinate, metaclass=ABCMeta):
         """ 可動域の中かどうかを返す関数 """
         pass
 
-    def infiltrate(self, target, labels):
+    def infiltrate(self, target, labels={}):
         """
         API用の構造体に自分の値を挿入
 
