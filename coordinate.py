@@ -2,17 +2,21 @@ from abc import (ABCMeta, abstractmethod)
 from collections.abc import Mapping
 
 # Abstract Classes
-def private_var_name(cls, name):
-    if not isinstance(cls, type):
-        cls = cls.__class__
-    return "_" + cls.__name__ + "__" + name
+class MetaCoordinate(ABCMeta):
+    def __new__(mcls, *args, **kwargs):
+        cls = super().__new__(mcls, *args, **kwargs)
+        if not hasattr(cls, "AXES"):
+            raise RuntimeError("AXES not found")
+        for axis in cls.AXES:
+            setattr(cls, axis, property(lambda self: self[axis]))
+        return cls
 
-class Coordinate(Mapping, metaclass=ABCMeta):
+class Coordinate(Mapping, metaclass=MetaCoordinate):
     AXES = tuple()
 
     def __getitem__(self, key):
         if key in self.AXES:
-            return getattr(self, private_var_name(self, key))
+            return getattr(self, "_"+key)
         else:
             raise KeyError()
     
@@ -31,10 +35,7 @@ class Coordinate(Mapping, metaclass=ABCMeta):
         while args[-1] < -180: args[-1] += 360
         while args[-1] > +180: args[-1] -= 360
         for axis, arg in zip(self.AXES, args):
-            setattr(self, "__" + axis, arg)
-    def __set_props(self):
-        for axis in self.AXES:
-            setattr(self.__class__, axis, property(lambda self: self[axis]))
+            setattr(self, "_" + axis, arg)
     
     #@abstractmethod
     def __add__(self, other):
@@ -49,7 +50,7 @@ class Coordinate(Mapping, metaclass=ABCMeta):
     def __div__(self, val):
         pass
 
-class AbsoluteCoordinate(Coordinate, metaclass=ABCMeta):
+class AbsoluteCoordinate(Coordinate):
     #@abstractmethod
     def validate(self):
         """ 可動域の中かどうかを返す関数 """
@@ -73,10 +74,10 @@ class AbsoluteCoordinate(Coordinate, metaclass=ABCMeta):
                 setattr(target, axis, self[axis])
         return target
 
-class RelativeCoordinate(metaclass=ABCMeta):
+class RelativeCoordinate(Coordinate):
     pass
 
-class CartesianCoordinate(Coordinate, metaclass=ABCMeta):
+class CartesianCoordinate(Coordinate):
     AXES = ("x", "y", "z", "r")
 
     def __init__(self, x, y, z, r=0):
@@ -86,7 +87,7 @@ class CartesianCoordinate(Coordinate, metaclass=ABCMeta):
         pass
 
 
-class JointCoordinate(Coordinate, metaclass=ABCMeta):
+class JointCoordinate(Coordinate):
     AXES = ("j1", "j2", "j3", "j4")
 
     def __init__(self, j1, j2, j3, j4):
