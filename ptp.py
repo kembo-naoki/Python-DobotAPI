@@ -2,57 +2,65 @@ from enum   import Enum
 from ctypes import (Structure, byref, c_float, c_byte)
 from typing import (List, Dict, Optional, Union, SupportsFloat)
 
-from base import (CommandModule, API)
+from main import (API, setting_method, DobotCommand, Dobot)
 from coordinate import (convert_coord, Coordinate,
+    CartesianCoordinateSystem, JointCoordinateSystem,
     CartCoord, CartVector, JointCoord, JointVector)
 
-class MoveController(CommandModule):
+class MovementController(DobotCommand):
     """ アームの特定座標から特定座標への基本的な動きを司るクラス """
-    class PTPMode(Enum):
-        JUMP_XYZ   = 0
-        MOVJ_XYZ   = 1
-        MOVL_XYZ   = 2
+    class _PTPMode(Enum):
+        JUMP_XYZ = 0
+        MOVJ_XYZ = 1
+        MOVL_XYZ = 2
         JUMP_ANGLE = 3
         MOVJ_ANGLE = 4
         MOVL_ANGLE = 5
-        MOVJ_INC   = 6
-        MOVL_INC   = 7
+        MOVJ_INC = 6
+        MOVL_INC = 7
         MOVJ_XYZ_INC = 8
         JUMP_MOVL_XYZ= 9
     class RouteMode(Enum):
         REGARDLESS = 0
         LINEAR     = 1
         JUMP       = 2
+    class CoordinateSystem(Enum):
+        Cartesian = 0
+        Joint = 1
     
-    MODE_LIST = {
-        RouteMode.REGARDLESS: {
-            CartCoord:  PTPMode.MOVJ_XYZ,
-            CartVector: PTPMode.MOVJ_XYZ_INC,
-            JointCoord: PTPMode.MOVJ_ANGLE,
-            JointVector: PTPMode.MOVJ_INC
-        },
-        RouteMode.LINEAR: {
-            CartCoord:  PTPMode.MOVL_XYZ,
-            CartVector: PTPMode.MOVL_INC,
-            JointCoord: PTPMode.MOVL_ANGLE,
-            JointVector: "You can't use RouteMode.LINEAR with `JointVector`."
-        },
-        RouteMode.JUMP: {
-            CartCoord:  PTPMode.JUMP_XYZ,
-            CartVector: PTPMode.JUMP_MOVL_XYZ,
-            JointCoord: PTPMode.JUMP_ANGLE,
-            JointVector: "You can't use RouteMode.JUMP with `JointVector`."
-        }
-    }
-
+    MODE_LIST = [
+        [
+            {
+                RouteMode.REGARDLESS: _PTPMode.MOVJ_ANGLE,
+                RouteMode.LINEAR:     _PTPMode.MOVL_ANGLE,
+                RouteMode.JUMP:       _PTPMode.JUMP_ANGLE
+            }, {
+                RouteMode.REGARDLESS: _PTPMode.MOVJ_INC,
+                RouteMode.LINEAR:
+                    ValueError("You can't use `RouteMode.LINEAR` "
+                               "and increment mode with `JointCoordinate`."),
+                RouteMode.JUMP:
+                    ValueError("You can't use `RouteMode.JUMP` "
+                               "and increment mode with `JointCoordinate`.")
+            }
+        ], [
+            {
+                RouteMode.REGARDLESS: _PTPMode.MOVJ_XYZ,
+                RouteMode.LINEAR:     _PTPMode.MOVL_XYZ,
+                RouteMode.JUMP:       _PTPMode.JUMP_XYZ
+            }, {
+                RouteMode.REGARDLESS: _PTPMode.MOVJ_XYZ_INC,
+                RouteMode.LINEAR:     _PTPMode.MOVL_INC,
+                RouteMode.JUMP:       _PTPMode.JUMP_MOVL_XYZ
+            }
+        ]
+    ]
 
     def __init__(self, dobot:'Dobot'):
-        self.dobot = dobot
-        self.check_list = {
-            "joint_prms": False,
-            "common_ratio": False }
-        self.requirements = ("joint_prms", "common_ratio")
+        super().__init__(dobot)
+        self.set_mode()
 
+    @setting_method
     def set_joint_prms(self, vel:List[SupportsFloat],
                              acc:List[SupportsFloat], *, imm:bool = False):
         """ モーター毎の速度加速度の設定
@@ -71,9 +79,9 @@ class MoveController(CommandModule):
         param.joint2Acceleration = acc[1]
         param.joint3Acceleration = acc[2]
         param.joint4Acceleration = acc[3]
-        self.dobot.queue.send(API.SetMoveControllerJointParams, byref(param), imm = imm)
-        self.check_list["joint_prms"] = True
+        self.dobot.queue.send(API.SetMoveControllerJointParams, (byref(param),), imm = imm)
 
+    @setting_method
     def set_common_ratio(self, vel:SupportsFloat,
                                acc:SupportsFloat, *, imm:bool = False):
         """ 速度と加速度の倍率設定
@@ -86,26 +94,39 @@ class MoveController(CommandModule):
         param = PTPCommonParams()
         param.velocityRatio = vel
         param.accelerationRatio = acc
-        self.dobot.queue.send(API.SetMoveControllerCommonParams, byref(param), imm = imm)
-        self.check_list["common_ratio"] = True
-
-    def exec(self, dest:Union[Coordinate,Dict[str,SupportsFloat]], relative:Optional[bool]=None,
-                   mode:'MoveController.RouteMode'=RouteMode.REGARDLESS, *, imm:bool = False):
+        self.dobot.queue.send(API.SetMoveControllerCommonParams, (byref(param),), imm = imm)
+    
+    @setting_method
+    def set_mode(self, cartesian:bool = True, increment:bool = False,
+                 route:RouteMode = RouteMode.REGARDLESS):
+        """ Dobot の移動先の指定方法や経路を設定します。 """
+        self._mode = (cartesian, increment, route) # type: Tuple[bool, bool, MovementController.RouteMode]
+    
+    @property
+    def mode(self) -> Dict:
+        return {
+            'cartesian': self._mode[0],
+            'increment': self._mode[1],
+            'route': self._mode[2]
+        }
+        
+    def exec(self, dest:Union[Coordinate,Dict[str,SupportsFloat]], *, imm:bool = False):
         """ アームを特定の座標まで経路を選択して動かす。 """
-        if relative is None:
-            if isinstance(dest, Coordinate):
-                relative = dest.is_relative
-            else:
-                relative = False
-        dest = convert_coord(dest, relative)
+        dest = convert_coord(dest, self._mode[1])
+
+        just_cart  = self._mode[0] and isinstance(dest, CartesianCoordinateSystem)
+        just_joint = (not self._mode[0]) and isinstance(dest, JointCoordinateSystem)
+        if not(just_cart or just_joint):
+            raise TypeError("not match coordinate system.")
+
+        mode = self.MODE_LIST[self._mode[0]][self._mode[1]][self._mode[2]]
+        if not isinstance(mode, Exception):
+            raise mode
 
         cmd = PTPCmd()
-        mode = self.MODE_LIST[mode][type(dest)]
-        if not isinstance(mode, self.PTPMode):
-            raise ValueError(mode["message"])
         cmd.ptpMode = mode.value
         cmd = dest.infiltrate(cmd, {"r": "rHead", "j1": "x", "j2": "y", "j3": "z", "j4": "rHead"})
-        return self.dobot.queue.send(API.SetPTPCmd, byref(cmd), imm = imm)
+        return self.dobot.queue.send(API.SetPTPCmd, (byref(cmd),), imm = imm)
 
 class PTPJointParams(Structure):
     _fields_ = [
