@@ -1,11 +1,13 @@
 from enum   import Enum
 from ctypes import (Structure, byref, c_float, c_byte)
+from typing import (List, Dict, Optional, Union, SupportsFloat)
 
 from base import (CommandModule, API)
 from coordinate import (convert_coord, Coordinate,
     CartCoord, CartVector, JointCoord, JointVector)
 
 class MoveController(CommandModule):
+    """ アームの特定座標から特定座標への基本的な動きを司るクラス """
     class PTPMode(Enum):
         JUMP_XYZ   = 0
         MOVJ_XYZ   = 1
@@ -22,10 +24,6 @@ class MoveController(CommandModule):
         LINEAR     = 1
         JUMP       = 2
     
-    AXES_LIST = {
-        "Cartesian": ("x", "y", "z", "r"),
-        "Joint": ("j1", "j2", "j3", "j4")
-    }
     MODE_LIST = {
         RouteMode.REGARDLESS: {
             CartCoord:  PTPMode.MOVJ_XYZ,
@@ -48,25 +46,21 @@ class MoveController(CommandModule):
     }
 
 
-    def __init__(self, dobot):
+    def __init__(self, dobot:'Dobot'):
         self.dobot = dobot
         self.check_list = {
             "joint_prms": False,
             "common_ratio": False }
         self.requirements = ("joint_prms", "common_ratio")
 
-    def set_joint_prms(self, vel, acc, *, imm=False):
-        """
-        MoveController コマンドのモーター毎の速度加速度の設定
+    def set_joint_prms(self, vel:List[SupportsFloat],
+                             acc:List[SupportsFloat], *, imm:bool = False):
+        """ モーター毎の速度加速度の設定
 
-        Parameters
-        ----------
-        vel: list of float
+        vel
             J1, J2, J3, J4 の各モーターの最高速度。単位はmm/s(0-500)
-        acc: list of float
+        acc
             J1, J2, J3, J4 の各モーターの加速度。単位はmm/s(0-500)
-        imm: bool
-            即座に実行する
         """
         param = PTPJointParams()
         param.joint1Velocity = vel[0]
@@ -77,66 +71,41 @@ class MoveController(CommandModule):
         param.joint2Acceleration = acc[1]
         param.joint3Acceleration = acc[2]
         param.joint4Acceleration = acc[3]
-        self.dobot.queue.send(API.SetMoveControllerJointParams, byref(param), imm=imm)
+        self.dobot.queue.send(API.SetMoveControllerJointParams, byref(param), imm = imm)
         self.check_list["joint_prms"] = True
 
-    def set_common_ratio(self, vel, acc, *, imm=False):
-        """
-        MoveController コマンド使用時の速度倍率設定
+    def set_common_ratio(self, vel:SupportsFloat,
+                               acc:SupportsFloat, *, imm:bool = False):
+        """ 速度と加速度の倍率設定
 
-        Parameters
-        ----------
-        vel: float
+        vel
             速度の倍率。(0%-100%)
-        acc: float
+        acc
             加速度の倍率。(0%-100%)
-        imm: bool
-            即座に実行する
         """
         param = PTPCommonParams()
         param.velocityRatio = vel
         param.accelerationRatio = acc
-        self.dobot.queue.send(API.SetMoveControllerCommonParams, byref(param), imm=imm)
+        self.dobot.queue.send(API.SetMoveControllerCommonParams, byref(param), imm = imm)
         self.check_list["common_ratio"] = True
 
-    def exec(self, point, relative=None, mode=RouteMode.REGARDLESS, *, imm=False):
-        """
-        アームを特定の座標まで任意の経路で動かす。
-
-        Parameters
-        ----------
-        point: (Coordinate, dict)
-            目的地を表す。
-            dobot.coordinate モジュールで定義されているクラスのインスタンス、
-            もしくはx,y,z,rまたはj1,j2,j3,j4による座標の指定。
-        relative: bool
-            True ならば point を相対座標として動かす。省略した場合 point の型に従い、
-            point が dict の場合は False になります。
-        mode: MoveController
-            REGARDLESS = 各関節の動きを優先して最適な経路で向かう
-            LINEAR = 直線的な経路で向かう
-            JUMP = ジャンプするように一度持ち上げて下ろす経路
-        imm: bool
-            True のとき即座に実行する。
-
-        Returns
-        -------
-        cmd_index: int
-        """
+    def exec(self, dest:Union[Coordinate,Dict[str,SupportsFloat]], relative:Optional[bool]=None,
+                   mode:'MoveController.RouteMode'=RouteMode.REGARDLESS, *, imm:bool = False):
+        """ アームを特定の座標まで経路を選択して動かす。 """
         if relative is None:
-            if isinstance(point, Coordinate):
-                relative = point.is_relative
+            if isinstance(dest, Coordinate):
+                relative = dest.is_relative
             else:
                 relative = False
-        point = convert_coord(point, relative)
+        dest = convert_coord(dest, relative)
 
         cmd = PTPCmd()
-        mode = self.MODE_LIST[mode][type(point)]
+        mode = self.MODE_LIST[mode][type(dest)]
         if not isinstance(mode, self.PTPMode):
             raise ValueError(mode["message"])
         cmd.ptpMode = mode.value
-        cmd = point.infiltrate(cmd, "x", "y", "z", "rHead")
-        return self.dobot.queue.send(API.SetPTPCmd, byref(cmd), imm=imm)
+        cmd = dest.infiltrate(cmd, {"r": "rHead", "j1": "x", "j2": "y", "j3": "z", "j4": "rHead"})
+        return self.dobot.queue.send(API.SetPTPCmd, byref(cmd), imm = imm)
 
 class PTPJointParams(Structure):
     _fields_ = [

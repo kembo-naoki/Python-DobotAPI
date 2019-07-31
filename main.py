@@ -1,33 +1,22 @@
-from time   import sleep
 from ctypes import (create_string_buffer, Structure, byref, c_float, c_uint32, c_uint64)
+from time   import (sleep)
+from typing import (SupportsFloat, SupportsInt, List, Mapping, Tuple)
 
 from base import (API, CommandModule)
-from coordinate import (Coordinate, CartCoord, CartVector, JointCoord, JointVector)
-from ptp  import MoveController
-from gpio import IOController
+from coordinate import (convert_coord, Coordinate,
+                        CartCoord, CartVector, JointCoord, JointVector)
+from ptp  import (MoveController)
+from gpio import (IOController)
 
 class Dobot():
-    """
-    Attributes
-    ----------
-    INTERVAL_CMD: float
-        コマンドの送信間隔(秒)
-    INTERVAL_GRIP: int
-        グリッパーの開閉のための待ち時間(ms)
-    LIM_COMMAND: int
-        コマンド送信失敗時のリトライ回数
-    """
+    """ Dobot 本体を表すクラス """
 
     INTERVAL_CMD = 0.005
     INTERVAL_GRIP = 1000
     LIM_COMMAND = 5
 
     def __init__(self, logger=None):
-        """
-        Parameters
-        ----------
-        logger: optional
-        """
+        """ インスタンスを作成した時点ではまだ接続はしません。 """
         self.is_connected = False
 
         self.queue = QueueController(self)
@@ -37,17 +26,8 @@ class Dobot():
         if logger is not None: self.logger = logger
 
     # コマンドそのものに関するメソッド
-    def send_cmd(self, cmd, *args):
-        """
-        コマンドを送信する
-
-        Parameters
-        ----------
-        cmd: function
-            送信したいコマンドの関数
-        *args
-            上記コマンドへの引数
-        """
+    def send_cmd(self, cmd:API._FuncPtr, *args):
+        """ コマンドを送信する """
         result = cmd(*args)
         if result == 0:
             return result
@@ -58,9 +38,10 @@ class Dobot():
         else:
             raise RuntimeError("unknown error with sending command")
     def force_stop(self):
-        """
-        実行中のコマンドも含めて緊急停止し、キューにコマンドを積めなくなる。
-        queue_clear, queue_start, queue_pause のいずれかでキューにコマンドを積めるようになる。
+        """ 実行中のコマンドも含めて緊急停止し、キューにコマンドを積めなくなる。
+
+        `Dobot.queue_clear()`, `Dobot.queue_start()`, `Dobot.queue_pause()`のいずれかのメソッドで
+        再びキューにコマンドを積めるようになる。
         """
         self.stop_flg = True
         self.send_cmd(API.SetQueuedCmdForceStopExec)
@@ -97,28 +78,15 @@ class QueueController(CommandModule):
     def last_index(self):
         return self._last_index
 
-    def __init__(self, dobot):
+    def __init__(self, dobot:Dobot):
         super().__init__(dobot)
         self.enable = True
         self._last_index = -1
 
-    def send(self, cmd, *args, imm=False):
-        """
-        コマンドを Dobot のキューに積む。
+    def send(self, cmd:API._FuncPtr, *args, imm:bool = False) -> int:
+        """ コマンドを Dobot のキューに積む。
 
-        Parameters
-        ----------
-        cmd: function
-            送信したいコマンドの関数
-        *args
-            上記コマンドへの引数
-        imm: bool
-            True のとき即座に実行する
-
-        Returns
-        -------
-        last_index: int
-            Dobot のキューインデックス
+        キューに積まず即座に実行したい場合は、`imm`を`True`にしてください。
         """
         if not self.enable:
             return -1
@@ -144,14 +112,8 @@ class QueueController(CommandModule):
         self.dobot.send_cmd(API.SetQueuedCmdStopExec)
         self.enable = False
 
-    def get_current_index(self):
-        """
-        現在まで実行完了済のキューインデックス
-
-        Returns
-        -------
-        index: int
-        """
+    def get_current_index(self) -> int:
+        """ 現在まで実行完了済のキューインデックス """
         queued_cmd_index = c_uint64(0)
         counter = 0
         while True:
@@ -166,33 +128,20 @@ class QueueController(CommandModule):
 
 class ArmController(CommandModule):
     """ アーム関連のコマンド群 """
-    def __init__(self, dobot):
+    def __init__(self, dobot:Dobot):
         self.dobot = dobot
         self.movement = MoveController(dobot)
         self.move_to = self.movement.exec
 
-    def set_home_params(self, coord, *, imm=False):
-        """
-        ホームポジションの設定
-
-        Parameters
-        ----------
-        coord: CartCoord
-            ホームポジションのデカルト座標
-        imm: bool
-            True のとき即座に実行する
-        """
+    def set_home_params(self, coord:Mapping[str,SupportsFloat], *, imm:bool = False):
+        """ ホームポジションの設定 """
+        coord = convert_coord(coord, relative=False)
         param = HomeParams()
         param = coord.infiltrate(param)
-        return self.dobot.queue.send(API.SetHOMEParams, byref(param), imm=imm)
+        return self.dobot.queue.send(API.SetHOMEParams, byref(param), imm = imm)
 
     # 情報取得
-    def _get_pose(self):
-        """
-        Returns
-        -------
-        pose: (CartCoord, JointCoord)
-        """
+    def _get_pose(self) -> Tuple[CartCoord, JointCoord]:
         pose = Pose()
         self.dobot.send_cmd(API.GetPose, byref(pose))
         return (
@@ -200,69 +149,44 @@ class ArmController(CommandModule):
             JointCoord(pose.joint1Angle, pose.joint2Angle,
                        pose.joint3Angle, pose.joint4Angle, False) )
 
-    def get_pose_in_cartesian(self):
-        """
-        現在のアームの手首部分の座標
-
-        Returns
-        -------
-        coord: CartCoord
-        """
+    def get_pose_in_cartesian(self) -> CartCoord:
+        """ 現在のアームの手首部分の座標 """
         return self._get_pose()[0]
-    def get_pose_in_joint(self):
-        """
-        現在の各関節の角度
-
-        Returns
-        -------
-        coord: CartCoord
-        """
+    def get_pose_in_joint(self) -> JointCoord:
+        """ 現在の各関節の角度 """
         return self._get_pose()[1]
 
     # Dobot 動作
-    def reset_home(self, *, imm=False):
-        """
-        ホームポジションリセット
-        imm: bool
-            True のとき即座に実行する
-        """
+    def reset_home(self, *, imm:bool = False):
+        """ ホームポジションリセット """
         cmd = HOMECmd()
         cmd.temp = 0
-        return self.dobot.queue.send(API.SetHOMECmd, byref(cmd), imm=imm)
-    def wait(self, ms, *, imm=False):
-        """
-        待機命令
-
-        Parameters
-        ----------
-        ms: int
-            待機時間（ミリ秒）
-        imm: bool
-            True のとき即座に実行する
-        """
+        return self.dobot.queue.send(API.SetHOMECmd, byref(cmd), imm = imm)
+    def wait(self, ms:SupportsInt, *, imm:bool = False):
+        """ 待機命令 """
         cmd = WAITCmd()
-        cmd.waitTime = ms
-        return self.dobot.queue.send(API.SetWAITCmd, byref(cmd), imm=imm)
+        cmd.waitTime = int(ms)
+        return self.dobot.queue.send(API.SetWAITCmd, byref(cmd), imm = imm)
 
-    def open_gripper(self, *, imm=False):
+    def open_gripper(self, *, imm:bool = False):
         """ グリッパーを開く """
-        self.dobot.queue.send(API.SetEndEffectorGripper, 1, 0, imm=imm)
+        self.dobot.queue.send(API.SetEndEffectorGripper, 1, 0, imm = imm)
         return self.wait(Dobot.INTERVAL_GRIP)
-    def close_gripper(self, *, imm=False):
+    def close_gripper(self, *, imm:bool = False):
         """ グリッパーを閉じる """
-        self.dobot.queue.send(API.SetEndEffectorGripper, 1, 1, imm=imm)
+        self.dobot.queue.send(API.SetEndEffectorGripper, 1, 1, imm = imm)
         return self.wait(Dobot.INTERVAL_GRIP)
-    def stop_pump(self, *, imm=False):
+    def stop_pump(self, *, imm:bool = False):
         """ ポンプの停止 """
-        return self.dobot.queue.send(API.SetEndEffectorSuctionCup, 1, 0, imm=imm)
+        return self.dobot.queue.send(API.SetEndEffectorSuctionCup, 1, 0, imm = imm)
 
 # エラー
 class DobotError(Exception):
     """ Dobot から送出されるエラー """
     pass
 class DobotTimeout(DobotError, TimeoutError):
-    """
-    Dobot から送信されるタイムアウトエラー
+    """ Dobot から送信されるタイムアウトエラー
+
     通信不安定などによって生じるスクリプト上でのタイムアウトエラーは除く
     """
     pass
