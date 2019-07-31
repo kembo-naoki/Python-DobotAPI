@@ -2,7 +2,8 @@ from enum   import Enum
 from ctypes import (Structure, byref, c_float, c_byte)
 
 from base import (CommandModule, API)
-from coordinate import *
+from coordinate import (convert_coord, Coordinate,
+    CartCoord, CartVector, JointCoord, JointVector)
 
 class MoveController(CommandModule):
     class PTPMode(Enum):
@@ -98,7 +99,7 @@ class MoveController(CommandModule):
         self.dobot.queue.send(API.SetMoveControllerCommonParams, byref(param), imm=imm)
         self.check_list["common_ratio"] = True
 
-    def exec(self, point, relative=None, *,mode=RouteMode.REGARDLESS , imm=False):
+    def exec(self, point, relative=None, mode=RouteMode.REGARDLESS, *, imm=False):
         """
         アームを特定の座標まで任意の経路で動かす。
 
@@ -124,18 +125,18 @@ class MoveController(CommandModule):
         """
         if relative is None:
             if isinstance(point, Coordinate):
-                relative = isinstance(point, RelativeCoordinate)
+                relative = point.is_relative
             else:
                 relative = False
         point = convert_coord(point, relative)
 
         cmd = PTPCmd()
-        mode = self.MODE_LIST[route_mode][type(coord)]
+        mode = self.MODE_LIST[mode][type(point)]
         if not isinstance(mode, self.PTPMode):
             raise ValueError(mode["message"])
         cmd.ptpMode = mode.value
-        cmd = coord.infiltrate(cmd, "x", "y", "z", "rHead")
-        return self.dobot.queue.send(API.SetMoveControllerCmd, byref(cmd), imm=imm)
+        cmd = point.infiltrate(cmd, "x", "y", "z", "rHead")
+        return self.dobot.queue.send(API.SetPTPCmd, byref(cmd), imm=imm)
 
 class PTPJointParams(Structure):
     _fields_ = [

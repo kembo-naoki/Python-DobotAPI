@@ -1,5 +1,5 @@
 from time   import sleep
-from ctypes import (create_string_buffer, Structure, byref, c_uint32, c_float)
+from ctypes import (create_string_buffer, Structure, byref, c_float, c_uint32, c_uint64)
 
 from base import (API, CommandModule)
 from coordinate import (Coordinate, CartCoord, CartVector, JointCoord, JointVector)
@@ -93,10 +93,14 @@ class Dobot():
         self.is_connected = False
 
 class QueueController(CommandModule):
+    @property
+    def last_index(self):
+        return self._last_index
+
     def __init__(self, dobot):
         super().__init__(dobot)
         self.enable = True
-        self.last = -1
+        self._last_index = -1
 
     def send(self, cmd, *args, imm=False):
         """
@@ -113,7 +117,7 @@ class QueueController(CommandModule):
 
         Returns
         -------
-        last_cmd: int
+        last_index: int
             Dobot のキューインデックス
         """
         if not self.enable:
@@ -122,8 +126,8 @@ class QueueController(CommandModule):
         mode = 0 if imm else 1
         self.dobot.send_cmd(cmd, *args, mode, byref(cmd_index))
         idx = cmd_index.value
-        self.last = idx
-        return self.last
+        self._last_index = idx
+        return self._last_index
 
     def clear(self):
         """ キューに積まれたコマンドをクリア """
@@ -153,7 +157,7 @@ class QueueController(CommandModule):
         while True:
             self.dobot.send_cmd(API.GetQueuedCmdCurrentIndex, byref(queued_cmd_index))
             index = queued_cmd_index.value
-            if index <= self.last_cmd:  break
+            if index <= self._last_index:  break
 
             counter += 1
             if counter > Dobot.LIM_COMMAND:  raise TimeoutError("timeout error with getting current command")

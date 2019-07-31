@@ -3,7 +3,7 @@ from collections.abc import Mapping
 
 # methods
 def convert_coord(val, relative):
-    if not isinstance(val, (Cordinate, dict)):
+    if not isinstance(val, (Coordinate, dict)):
         raise TypeError("It must be dict or dobot.coordinate.Coordinate.")
     if relative:
         if isinstance(val, RelativeCoordinate):
@@ -57,6 +57,10 @@ class Coordinate(Mapping, metaclass=MetaCoordinate):
         for axis, arg in zip(self.AXES, args):
             setattr(self, "_" + axis, arg)
     
+    @abstractmethod
+    def is_relative(self):
+        pass
+    
     #@abstractmethod
     def __add__(self, other):
         pass
@@ -75,6 +79,9 @@ class AbsoluteCoordinate(Coordinate):
     def is_valid(self):
         """ 可動域の中かどうかを返す関数 """
         pass
+    
+    def is_relative(self):
+        return False
 
     def infiltrate(self, target, labels={}):
         """
@@ -95,7 +102,8 @@ class AbsoluteCoordinate(Coordinate):
         return target
 
 class RelativeCoordinate(Coordinate):
-    pass
+    def is_relative(self):
+        return True
 
 class CartesianCoordinateSystem(Coordinate):
     AXES = ("x", "y", "z", "r")
