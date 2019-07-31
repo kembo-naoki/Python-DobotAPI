@@ -1,13 +1,8 @@
 from time   import sleep
-from ctypes import (create_string_buffer, Structure, byref,
-                    c_uint64, c_uint32, c_ushort, c_float, c_byte)
+from ctypes import (create_string_buffer, Structure, byref, c_uint32, c_float)
 
 from base import (API, CommandModule)
-from coordinate import (Coordinate,
-                        CartesianAbsoluteCoordinate as CartesianCoord,
-                        CartesianRelativeCoordinate as CartesianVec,
-                        JointAbsoluteCoordinate     as JointCoord,
-                        JointRelativeCoordinate     as JointVec)
+from coordinate import (Coordinate, CartCoord, CartVector, JointCoord, JointVector)
 from ptp  import MoveController
 from gpio import IOController
 
@@ -178,7 +173,7 @@ class ArmController(CommandModule):
 
         Parameters
         ----------
-        coord: CartesianCoord
+        coord: CartCoord
             ホームポジションのデカルト座標
         imm: bool
             True のとき即座に実行する
@@ -192,12 +187,12 @@ class ArmController(CommandModule):
         """
         Returns
         -------
-        pose: (CartesianCoord, JointCoord)
+        pose: (CartCoord, JointCoord)
         """
         pose = Pose()
         self.dobot.send_cmd(API.GetPose, byref(pose))
         return (
-            CartesianCoord(pose.x, pose.y, pose.z, pose.rHead, False),
+            CartCoord(pose.x, pose.y, pose.z, pose.rHead, False),
             JointCoord(pose.joint1Angle, pose.joint2Angle,
                        pose.joint3Angle, pose.joint4Angle, False) )
 
@@ -207,7 +202,7 @@ class ArmController(CommandModule):
 
         Returns
         -------
-        coord: CartesianCoord
+        coord: CartCoord
         """
         return self._get_pose()[0]
     def get_pose_in_joint(self):
@@ -216,7 +211,7 @@ class ArmController(CommandModule):
 
         Returns
         -------
-        coord: CartesianCoord
+        coord: CartCoord
         """
         return self._get_pose()[1]
 
@@ -297,7 +292,5 @@ class Pose(Structure):
 
 class WAITCmd(Structure):
     _pack_ = 1
-    _fields_ = [
-        ("waitTime", c_uint32)
-        ]
+    _fields_ = [("waitTime", c_uint32)]
 

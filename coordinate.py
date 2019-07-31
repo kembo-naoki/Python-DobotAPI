@@ -1,6 +1,26 @@
 from abc import (ABCMeta, abstractmethod)
 from collections.abc import Mapping
 
+# methods
+def convert_coord(val, relative):
+    if not isinstance(val, (Cordinate, dict)):
+        raise TypeError("It must be dict or dobot.coordinate.Coordinate.")
+    if relative:
+        if isinstance(val, RelativeCoordinate):
+            return val
+        elif all(axis in val for axis in CartesianCoordinateSystem.AXES):
+            return CartVector(**val)
+        elif all(axis in val for axis in JointCoordinateSystem.AXES):
+            return JointVector(**val)
+    else:
+        if isinstance(val, AbsoluteCoordinate):
+            return val
+        elif all(axis in val for axis in CartesianCoordinateSystem.AXES):
+            return CartCoord(**val)
+        elif all(axis in val for axis in JointCoordinateSystem.AXES):
+            return JointCoord(**val)
+    raise ValueError("It must have keys ('x','y','z','r') or ('j1','j2','j3','j4').")
+
 # Abstract Classes
 class MetaCoordinate(ABCMeta):
     def __new__(mcls, *args, **kwargs):
@@ -52,7 +72,7 @@ class Coordinate(Mapping, metaclass=MetaCoordinate):
 
 class AbsoluteCoordinate(Coordinate):
     #@abstractmethod
-    def validate(self):
+    def is_valid(self):
         """ 可動域の中かどうかを返す関数 """
         pass
 
@@ -77,7 +97,7 @@ class AbsoluteCoordinate(Coordinate):
 class RelativeCoordinate(Coordinate):
     pass
 
-class CartesianCoordinate(Coordinate):
+class CartesianCoordinateSystem(Coordinate):
     AXES = ("x", "y", "z", "r")
 
     def __init__(self, x, y, z, r=0):
@@ -87,7 +107,7 @@ class CartesianCoordinate(Coordinate):
         pass
 
 
-class JointCoordinate(Coordinate):
+class JointCoordinateSystem(Coordinate):
     AXES = ("j1", "j2", "j3", "j4")
 
     def __init__(self, j1, j2, j3, j4):
@@ -96,7 +116,7 @@ class JointCoordinate(Coordinate):
 
 # Partical Classes
 
-class CartesianAbsoluteCoordinate(CartesianCoordinate, AbsoluteCoordinate):
+class CartCoord(CartesianCoordinateSystem, AbsoluteCoordinate):
     def __init__(self, x, y, z, r, check=False):
         """
         Parameters
@@ -113,13 +133,13 @@ class CartesianAbsoluteCoordinate(CartesianCoordinate, AbsoluteCoordinate):
             代入された値が可動域内かどうかを試験する（未実装）
         """
         super().__init__(x, y, z, r)
-        if check:
-            self.validate
+        if check and not self.is_valid():
+            raise ValueError("This position is invalid")
 
-class CartesianRelativeCoordinate(CartesianCoordinate, RelativeCoordinate):
+class CartVector(CartesianCoordinateSystem, RelativeCoordinate):
     pass
 
-class JointAbsoluteCoordinate(JointCoordinate, AbsoluteCoordinate):
+class JointCoord(JointCoordinateSystem, AbsoluteCoordinate):
     def __init__(self, j1, j2, j3, j4, check=False):
         """
         Parameters
@@ -135,9 +155,9 @@ class JointAbsoluteCoordinate(JointCoordinate, AbsoluteCoordinate):
         check: bool
             代入された値が可動域内かどうかを試験する（未実装）
         """
-        if check and not self.validate():
-            raise ValueError("This position is invalid")
         super().__init__(j1, j2, j3, j4)
+        if check and not self.is_valid():
+            raise ValueError("This position is invalid")
 
-class JointRelativeCoordinate(JointCoordinate, RelativeCoordinate):
+class JointVector(JointCoordinateSystem, RelativeCoordinate):
     pass

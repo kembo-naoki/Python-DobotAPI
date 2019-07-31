@@ -25,39 +25,27 @@ class MoveController(CommandModule):
         "Cartesian": ("x", "y", "z", "r"),
         "Joint": ("j1", "j2", "j3", "j4")
     }
-
     MODE_LIST = {
         RouteMode.REGARDLESS: {
-            CartesianCoordinate: {
-                "absolute": PTPMode.MOVJ_XYZ,
-                "relative": PTPMode.MOVJ_XYZ_INC
-            },
-            JointCoordinate: {
-                "absolute": PTPMode.MOVJ_ANGLE,
-                "relative": PTPMode.MOVJ_INC
-            }
+            CartCoord:  PTPMode.MOVJ_XYZ,
+            CartVector: PTPMode.MOVJ_XYZ_INC,
+            JointCoord: PTPMode.MOVJ_ANGLE,
+            JointVector: PTPMode.MOVJ_INC
         },
         RouteMode.LINEAR: {
-            CartesianCoordinate: {
-                "absolute": PTPMode.MOVL_XYZ,
-                "relative": PTPMode.MOVL_INC
-            },
-            JointCoordinate: {
-                "absolute": PTPMode.MOVL_ANGLE,
-                "relative": {"message": "You can't use `relative` mode with `JointCoordinate`."}
-            }
+            CartCoord:  PTPMode.MOVL_XYZ,
+            CartVector: PTPMode.MOVL_INC,
+            JointCoord: PTPMode.MOVL_ANGLE,
+            JointVector: "You can't use RouteMode.LINEAR with `JointVector`."
         },
         RouteMode.JUMP: {
-            CartesianCoordinate: {
-                "absolute": PTPMode.JUMP_XYZ,
-                "relative": PTPMode.JUMP_MOVL_XYZ
-            },
-            JointCoordinate: {
-                "absolute": PTPMode.JUMP_ANGLE,
-                "relative": {"message": "You can't use `relative` mode with `JointCoordinate`."}
-            }
+            CartCoord:  PTPMode.JUMP_XYZ,
+            CartVector: PTPMode.JUMP_MOVL_XYZ,
+            JointCoord: PTPMode.JUMP_ANGLE,
+            JointVector: "You can't use RouteMode.JUMP with `JointVector`."
         }
     }
+
 
     def __init__(self, dobot):
         self.dobot = dobot
@@ -110,31 +98,6 @@ class MoveController(CommandModule):
         self.dobot.queue.send(API.SetMoveControllerCommonParams, byref(param), imm=imm)
         self.check_list["common_ratio"] = True
 
-    def _exec(self, coord, relative, route_mode, *, imm=False):
-        """
-        アームを特定の座標まで動かす。
-
-        Parameters
-        ----------
-        coord: Coordinate
-        route_mode: MoveController.Mode
-        relative: bool
-        imm: bool
-            True のとき即座に実行する
-
-        Returns
-        -------
-        cmd_index: int
-        """
-        cmd = PTPCmd()
-        pos = "relative" if relative else "absolute"
-        mode = MoveController.MODE_LIST[route_mode][type(coord)][pos]
-        if not isinstance(mode, MoveController.PTPMode):
-            raise ValueError(mode["message"])
-        cmd.ptpMode = mode.value
-        cmd = coord.infiltrate(cmd, "x", "y", "z", "rHead")
-        return self.dobot.queue.send(API.SetMoveControllerCmd, byref(cmd), imm=imm)
-
     def exec(self, point, relative=None, *,mode=RouteMode.REGARDLESS , imm=False):
         """
         アームを特定の座標まで任意の経路で動かす。
@@ -159,28 +122,20 @@ class MoveController(CommandModule):
         -------
         cmd_index: int
         """
-        if isinstance(point, Coordinate):
-            if relative is None:
+        if relative is None:
+            if isinstance(point, Coordinate):
                 relative = isinstance(point, RelativeCoordinate)
-        elif isinstance(point, dict):
-            if relative is None:
-                relative = False
-            if all(axis in point for axis in self.AXES_LIST["Cartesian"]):
-                if relative:
-                    point = CartesianRelativeCoordinate(**point)
-                else:
-                    point = CartesianAbsoluteCoordinate(**point)
-            elif all(axis in point for axis in AXES_LIST["Joint"]):
-                if relative:
-                    point = JointRelativeCoordinate(**point)
-                else:
-                    point = JointAbsoluteCoordinate(**point)
             else:
-                raise ValueError("`point` must have keys (x,y,z,r) or (j1,j2,j3,j4).")
-        else:
-            raise TypeError("`point` must be dict or dobot.coordinate.Coordinate.")
+                relative = False
+        point = convert_coord(point, relative)
 
-        return self._exec(point, relative, mode, imm=imm)
+        cmd = PTPCmd()
+        mode = self.MODE_LIST[route_mode][type(coord)]
+        if not isinstance(mode, self.PTPMode):
+            raise ValueError(mode["message"])
+        cmd.ptpMode = mode.value
+        cmd = coord.infiltrate(cmd, "x", "y", "z", "rHead")
+        return self.dobot.queue.send(API.SetMoveControllerCmd, byref(cmd), imm=imm)
 
 class PTPJointParams(Structure):
     _fields_ = [
