@@ -1,11 +1,11 @@
-from enum   import Enum
+from enum import Enum
 from ctypes import (Structure, byref, c_float, c_byte)
-from typing import (List, Dict, Optional, Union, SupportsFloat)
+from typing import (List, Tuple, Dict, Union, SupportsFloat)
 
-from main import (API, setting_method, DobotCommand, Dobot)
+from base import (API, DobotClient, setting_method, DobotCommand)
 from coordinate import (convert_coord, Coordinate,
-    CartesianCoordinateSystem, JointCoordinateSystem,
-    CartCoord, CartVector, JointCoord, JointVector)
+                        CartesianCoordinateSystem, JointCoordinateSystem)
+
 
 class MovementController(DobotCommand):
     """ アームの特定座標から特定座標への基本的な動きを司るクラス """
@@ -19,15 +19,17 @@ class MovementController(DobotCommand):
         MOVJ_INC = 6
         MOVL_INC = 7
         MOVJ_XYZ_INC = 8
-        JUMP_MOVL_XYZ= 9
+        JUMP_MOVL_XYZ = 9
+
     class RouteMode(Enum):
         REGARDLESS = 0
-        LINEAR     = 1
-        JUMP       = 2
+        LINEAR = 1
+        JUMP = 2
+
     class CoordinateSystem(Enum):
         Cartesian = 0
         Joint = 1
-    
+
     MODE_LIST = [
         [
             {
@@ -56,13 +58,13 @@ class MovementController(DobotCommand):
         ]
     ]
 
-    def __init__(self, dobot:'Dobot'):
+    def __init__(self, dobot: DobotClient):
         super().__init__(dobot)
         self.set_mode()
 
     @setting_method
-    def set_joint_prms(self, vel:List[SupportsFloat],
-                             acc:List[SupportsFloat], *, imm:bool = False):
+    def set_joint_prms(self, vel: List[SupportsFloat],
+                       acc: List[SupportsFloat], *, imm: bool = False):
         """ モーター毎の速度加速度の設定
 
         vel
@@ -79,11 +81,12 @@ class MovementController(DobotCommand):
         param.joint2Acceleration = acc[1]
         param.joint3Acceleration = acc[2]
         param.joint4Acceleration = acc[3]
-        self.dobot.queue.send(API.SetMoveControllerJointParams, (byref(param),), imm = imm)
+        self.dobot.queue.send(
+            API.SetMoveControllerJointParams, (byref(param),), imm=imm)
 
     @setting_method
-    def set_common_ratio(self, vel:SupportsFloat,
-                               acc:SupportsFloat, *, imm:bool = False):
+    def set_common_ratio(self, vel: SupportsFloat,
+                         acc: SupportsFloat, *, imm: bool = False):
         """ 速度と加速度の倍率設定
 
         vel
@@ -94,14 +97,16 @@ class MovementController(DobotCommand):
         param = PTPCommonParams()
         param.velocityRatio = vel
         param.accelerationRatio = acc
-        self.dobot.queue.send(API.SetMoveControllerCommonParams, (byref(param),), imm = imm)
-    
+        self.dobot.queue.send(
+            API.SetMoveControllerCommonParams, (byref(param),), imm=imm)
+
     @setting_method
-    def set_mode(self, cartesian:bool = True, increment:bool = False,
-                 route:RouteMode = RouteMode.REGARDLESS):
+    def set_mode(self, cartesian: bool = True, increment: bool = False,
+                 route: RouteMode = RouteMode.REGARDLESS):
         """ Dobot の移動先の指定方法や経路を設定します。 """
-        self._mode = (cartesian, increment, route) # type: Tuple[bool, bool, MovementController.RouteMode]
-    
+        self._mode = (cartesian, increment, route)\
+            # type: Tuple[bool, bool, MovementController.RouteMode]
+
     @property
     def mode(self) -> Dict:
         return {
@@ -109,13 +114,16 @@ class MovementController(DobotCommand):
             'increment': self._mode[1],
             'route': self._mode[2]
         }
-        
-    def exec(self, dest:Union[Coordinate,Dict[str,SupportsFloat]], *, imm:bool = False):
+
+    def exec(self, dest: Union[Coordinate, Dict[str, SupportsFloat]], *,
+             imm: bool = False):
         """ アームを特定の座標まで経路を選択して動かす。 """
         dest = convert_coord(dest, self._mode[1])
 
-        just_cart  = self._mode[0] and isinstance(dest, CartesianCoordinateSystem)
-        just_joint = (not self._mode[0]) and isinstance(dest, JointCoordinateSystem)
+        just_cart = self._mode[0] and isinstance(
+            dest, CartesianCoordinateSystem)
+        just_joint = (not self._mode[0]) and isinstance(
+            dest, JointCoordinateSystem)
         if not(just_cart or just_joint):
             raise TypeError("not match coordinate system.")
 
@@ -125,8 +133,11 @@ class MovementController(DobotCommand):
 
         cmd = PTPCmd()
         cmd.ptpMode = mode.value
-        cmd = dest.infiltrate(cmd, {"r": "rHead", "j1": "x", "j2": "y", "j3": "z", "j4": "rHead"})
-        return self.dobot.queue.send(API.SetPTPCmd, (byref(cmd),), imm = imm)
+        rabel_replacements = {
+            "r": "rHead", "j1": "x", "j2": "y", "j3": "z", "j4": "rHead"}
+        cmd = dest.infiltrate(cmd, rabel_replacements)
+        return self.dobot.queue.send(API.SetPTPCmd, (byref(cmd),), imm=imm)
+
 
 class PTPJointParams(Structure):
     _fields_ = [
@@ -137,12 +148,16 @@ class PTPJointParams(Structure):
         ("joint1Acceleration", c_float),
         ("joint2Acceleration", c_float),
         ("joint3Acceleration", c_float),
-        ("joint4Acceleration", c_float) ]
+        ("joint4Acceleration", c_float)]
+
+
 class PTPCommonParams(Structure):
     _pack_ = 1
     _fields_ = [
         ("velocityRatio", c_float),
-        ("accelerationRatio", c_float) ]
+        ("accelerationRatio", c_float)]
+
+
 class PTPCmd(Structure):
     _pack_ = 1
     _fields_ = [
@@ -150,4 +165,4 @@ class PTPCmd(Structure):
         ("x", c_float),
         ("y", c_float),
         ("z", c_float),
-        ("rHead", c_float) ]
+        ("rHead", c_float)]
