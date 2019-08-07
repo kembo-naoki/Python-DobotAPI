@@ -2,9 +2,9 @@ from enum import Enum
 from ctypes import (Structure, byref, c_float, c_byte)
 from typing import (List, Tuple, Dict, Union, SupportsFloat)
 
-from base import (API, DobotClient, setting_method, DobotCommand)
-from coordinate import (convert_coord, Coordinate,
-                        CartesianCoordinateSystem, JointCoordinateSystem)
+from .base import (API, DobotClient, setting_method, DobotCommand)
+from .coordinate import (convert_coord, Coordinate,
+                         CartesianCoordinateSystem, JointCoordinateSystem)
 
 
 class MovementController(DobotCommand):

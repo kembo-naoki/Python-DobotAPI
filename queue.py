@@ -1,7 +1,7 @@
 from time import (sleep)
 from ctypes import (byref, c_uint64)
 
-from base import (API, DobotClient, DobotCommand)
+from .base import (API, DobotClient, DobotCommand)
 
 
 class QueueController(DobotCommand):

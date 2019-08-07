@@ -1,13 +1,12 @@
-from ctypes import (Structure, create_string_buffer, byref,
-                    c_float, c_uint32)
+from ctypes import (Structure, byref, c_float, c_uint32)
 from typing import (SupportsFloat, SupportsInt, Tuple, Mapping)
 
-from base import (API, DobotClient, setting_method, DobotCommand,
-                  DobotConnectionError, DobotTimeout)
-from ptp import (MovementController)
-from queue import QueueController
-# from gpio import (IOController)
-from coordinate import (convert_coord, CartCoord, JointCoord)
+from .base import (API, DobotClient, setting_method, DobotCommand,
+                   DobotConnectionError, DobotTimeout)
+from .ptp import (MovementController)
+from .queue import QueueController
+# from .gpio import (IOController)
+from .coordinate import (convert_coord, CartCoord, JointCoord)
 
 
 class Dobot(DobotClient):

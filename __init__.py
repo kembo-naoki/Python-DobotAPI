@@ -1,8 +1,8 @@
-from coordinate import (
+from .coordinate import (
     Coordinate, AbsoluteCoordinate, RelativeCoordinate,
     CartesianCoordinateSystem, JointCoordinateSystem,
     CartCoord, CartVector, JointCoord, JointVector)
-from main import Dobot
+from .main import Dobot
 
 __all__ = (
     "Coordinate", "AbsoluteCoordinate", "RelativeCoordinate",

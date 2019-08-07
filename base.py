@@ -16,7 +16,7 @@ class DobotClient(metaclass=ABCMeta):
         pass
 
     # with 文のサポート
-    def __enter__(self):
+    def __enter__(self) -> 'DobotClient':
         self.connect()
         return self
 
