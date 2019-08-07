@@ -15,6 +15,14 @@ class DobotClient(metaclass=ABCMeta):
         """ インスタンスを作成した時点ではまだ接続はしません。 """
         pass
 
+    # with 文のサポート
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, *_):
+        self.disconnect()
+
     # コマンドそのものに関するメソッド
     @abstractmethod
     def send_command(self, cmd: API._FuncPtr, args: tuple = tuple()):
@@ -37,6 +45,7 @@ class DobotClient(metaclass=ABCMeta):
         result = API.ConnectDobot(sz_para,  baud_rate,  fw_type,  version)
         if result == 0:  # No Error
             self.is_connected = True
+            return True
         elif result == 1:
             raise DobotConnectionError(
                 "connection error with first connecting")

@@ -36,44 +36,6 @@ class Dobot(DobotClient):
         else:
             raise RuntimeError("unknown error with sending command")
 
-    # 接続／切断
-    def connect(self):
-        """ 接続 """
-        if API.SearchDobot(create_string_buffer(1000),  1000) == 0:
-            raise DobotConnectionError("dobot not found")
-
-        port_name = ""
-        baud_rate = 115200
-
-        sz_para = create_string_buffer(100)
-        sz_para.raw = port_name.encode("utf-8")
-        fw_type = create_string_buffer(100)
-        version = create_string_buffer(100)
-        result = API.ConnectDobot(sz_para,  baud_rate,  fw_type,  version)
-        if result == 0:  # No Error
-            self.is_connected = True
-        elif result == 1:
-            raise DobotConnectionError(
-                "connection error with first connecting")
-        elif result == 2:
-            raise DobotTimeout("timeout error with first connecting")
-        else:
-            raise RuntimeError("unknown error with first connecting")
-
-    def disconnect(self):
-        """ 切断 """
-        API.DisconnectDobot()
-        self.is_connected = False
-
-    def force_stop(self):
-        """ 実行中のコマンドも含めて緊急停止し、キューにコマンドを積めなくなる。
-
-        `Dobot.queue_clear()`, `Dobot.queue_start()`, `Dobot.queue_pause()`
-        のいずれかのメソッドで再びキューにコマンドを積めるようになる。
-        """
-        self.stop_flg = True
-        self.send_command(API.SetQueuedCmdForceStopExec)
-
 
 class ArmController(DobotCommand):
     """ アーム関連のコマンド群 """
