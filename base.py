@@ -100,9 +100,8 @@ class DobotCommand(metaclass=_MetaCommand):
         """
         return self._progress_of_settings.copy()
 
-# エラー
 
-
+# Errors
 class DobotError(Exception):
     """ Dobot から送出されるエラー """
     pass
