@@ -1,129 +1,96 @@
-import functools
 from os import path
-from abc import (ABCMeta, abstractmethod)
 from ctypes import (cdll, create_string_buffer)
-from typing import (Callable, Dict)
+from typing import (Optional, List)
+
+from abstract_classes import (Server, Service)
 
 
-_CUR_DIR = path.dirname(path.abspath(__file__))
-API = cdll.LoadLibrary(_CUR_DIR + "/libDobotDll.so.1.0.0")
+class DobotServer(Server):
+    _CUR_DIR = path.dirname(path.abspath(__file__))
+    Lib = cdll.LoadLibrary(_CUR_DIR + "/libDobotDll.so.1.0.0")
 
+    def __init__(self):
+        self._is_connected = False
+        self.search = DobotSearcher(self)
+        self.connect = DobotConnector(self)
+        self.firmware_type = "Nothing"
+        self.firmware_version = "Nothing"
+        self.disconnect = DobotDisconnector(self)
 
-class DobotClient(metaclass=ABCMeta):
-    @abstractmethod
-    def __init__(self, logger=None):
-        """ インスタンスを作成した時点ではまだ接続はしません。 """
-        pass
+    def is_started(self):
+        return self._is_connected
 
     # with 文のサポート
-    def __enter__(self) -> 'DobotClient':
-        self.connect()
+    def __enter__(self, port: Optional(str) = None) -> 'DobotServer':
+        self.connect(port)
         return self
 
     def __exit__(self, *_):
         self.disconnect()
 
-    # コマンドそのものに関するメソッド
-    @abstractmethod
-    def send_command(self, cmd: API._FuncPtr, args: tuple = tuple()):
-        """ コマンドを送信する """
-        pass
 
-    # 接続／切断
-    def connect(self):
+class DobotService(Service):
+    def __init__(self, server: DobotServer):
+        self.server = server
+
+
+class DobotSearcher(DobotService):
+    MAX_LEN = 128
+
+    def __call__(self) -> List[str]:
+        buf_result = create_string_buffer(self.MAX_LEN)
+        num = self.server.Lib.SearchDobot(buf_result, self.MAX_LEN)
+        if num == 0:
+            return []
+        return buf_result.value.decode("utf-8").split(' ')
+
+
+class DobotConnector(DobotService):
+    def __init__(self, server: DobotServer, default_port: str = "",
+                 baud_rate: int = 115200, max_str_len: int = 100,
+                 encode_type: str = "utf-8"):
+        self.server = server
+
+        self.port = default_port
+        self.baud_rate = baud_rate
+        self.max_str_len = max_str_len
+        self.encode_type = encode_type
+
+    def __call__(self, port: Optional(str) = None) -> dict:
         """ 接続 """
-        if API.SearchDobot(create_string_buffer(1000),  1000) == 0:
-            raise DobotConnectionError("dobot not found")
+        if port is not None:
+            self.port = port
 
-        port_name = ""
-        baud_rate = 115200
+        port_name = create_string_buffer(
+            self.port.encode(self.encode_type), self.max_str_len)
+        fw_type = create_string_buffer(self.max_str_len)
+        version = create_string_buffer(self.max_str_len)
 
-        sz_para = create_string_buffer(100)
-        sz_para.raw = port_name.encode("utf-8")
-        fw_type = create_string_buffer(100)
-        version = create_string_buffer(100)
-        result = API.ConnectDobot(sz_para,  baud_rate,  fw_type,  version)
+        result = self.server.Lib.ConnectDobot(
+            port_name, self.baud_rate, fw_type, version)
+
         if result == 0:  # No Error
-            self.is_connected = True
-            return True
+            self.server._is_connected = True
+            fw_type = fw_type.value.decode(self.encode_type)
+            version = version.value.decode(self.encode_type)
+            self.server.firmware_type = fw_type
+            self.server.firmware_version = version
+            return {
+                "firmware_type": fw_type, "firmware_version": version
+            }
         elif result == 1:
-            raise DobotConnectionError(
-                "connection error with first connecting")
+            raise ConnectionError(
+                "Connection Error with connecting Dobot")
         elif result == 2:
-            raise DobotTimeout("timeout error with first connecting")
+            raise TimeoutError("Timeout Error with connecting Dobot")
         else:
-            raise RuntimeError("unknown error with first connecting")
+            raise RuntimeError("Unknown Error with connecting Dobot")
 
-    def disconnect(self):
+
+class DobotDisconnector(DobotService):
+    def __call__(self) -> None:
         """ 切断 """
-        API.DisconnectDobot()
-        self.is_connected = False
-
-    def force_stop(self):
-        """ 実行中のコマンドも含めて緊急停止し、キューにコマンドを積めなくなる。
-
-        `Dobot.queue_clear()`, `Dobot.queue_start()`, `Dobot.queue_pause()`
-        のいずれかのメソッドで再びキューにコマンドを積めるようになる。
-        """
-        self.stop_flg = True
-        self.send_command(API.SetQueuedCmdForceStopExec)
-
-
-# prepare for command classes
-def setting_method(func: Callable):
-    """ このメソッドを設定用メソッドとする """
-    func.setting_method = True
-    @functools.wraps(func)
-    def inner(self, *args, **kwargs):
-        result = func(self, *args, **kwargs)
-        self._progress_of_settings[func.__name__] = True
-        return result
-    return inner
-
-
-class _MetaCommand(ABCMeta):
-    def __new__(mcls, *args, **kwargs):
-        """ クラス定義時に設定用メソッドの一覧を作成 """
-        new_cls = super().__new__(mcls, *args, **kwargs)
-        new_cls.SETTING_METHODS = tuple(
-            f.__name__ for f in new_cls.__dict__.values()
-            if (isinstance(f, Callable)
-                and getattr(f, "setting_method", False))
-        )
-        return new_cls
-
-
-class DobotCommand(metaclass=_MetaCommand):
-    """ Dobot の各機能を表す抽象クラス。 """
-    SETTING_METHODS = tuple()
-
-    def __init__(self, dobot: DobotClient):
-        self.dobot = dobot
-        self._progress_of_settings = \
-            dict([name, False] for name in self.SETTING_METHODS)
-
-    def progress_of_settings(self) -> Dict[str, bool]:
-        """ そのコマンドのための設定の完了状況を示すメソッド。
-
-        設定用のメソッド名をキーとし、設定の完了状況を`bool`で示した`dict`が返されます。
-        """
-        return self._progress_of_settings.copy()
-
-
-# Errors
-class DobotError(Exception):
-    """ Dobot から送出されるエラー """
-    pass
-
-
-class DobotTimeout(DobotError, TimeoutError):
-    """ Dobot から送信されるタイムアウトエラー
-
-    通信不安定などによって生じるスクリプト上でのタイムアウトエラーは除く
-    """
-    pass
-
-
-class DobotConnectionError(DobotError, ConnectionError):
-    """ Dobot との通信に関するエラー """
-    pass
+        self.server.API.DisconnectDobot()
+        self.server._is_connected = False
+        self.server.firmware_type = "Nothing"
+        self.server.firmware_version = "Nothing"

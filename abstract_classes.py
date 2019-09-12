@@ -40,5 +40,5 @@ class Service(metaclass=ABCMeta):
         self.server = server
 
     @abstractmethod
-    def call(self):
+    def __call__(self):
         pass
