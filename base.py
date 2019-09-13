@@ -1,4 +1,5 @@
 from os import path
+from abc import abstractmethod
 from ctypes import (cdll, create_string_buffer)
 from typing import (Optional, List)
 
@@ -45,32 +46,75 @@ class AbstractDobotServer(Server):
 
 class AbstractAsyncDobotServer(AsyncServer):
     """Dobot と非同期で何らかの機能を提供するためのクラス"""
-    def __init__(self, server: DobotServer):
-        self.server = server
+    def __init__(self, dobot: DobotServer):
+        self.dobot = dobot
 
 
 class AbstractDobotService(Service):
-    """Dobot の1コマンド"""
+    """Dobot のコマンド
+
+    Attributes:
+        COMMAND(DobotServer.Lib._FuncPtr): コマンド本体
+    """
+    @abstractmethod
+    def __init__(self):
+        pass
+
+    def __call__(self) -> None:
+        """コマンドの実行"""
+        self._check_connection()
+        self._check_result(self.COMMAND())
+
+    def _check_connection(self) -> None:
+        """Dobot に接続していない場合エラーを返す
+
+        Raises:
+            RuntimeError
+        """
+        if not self.server.dobot.is_started():
+            raise RuntimeError("Dobot has not been connected.")
+
+    def _check_result(self, result):
+        """返り値に応じて適切なエラーを raise する
+
+        Raises:
+            TimeoutError
+            Exception: 公式ドキュメントに記載されていない未知のエラー。
+        """
+        if result == 0:  # No Error
+            return None
+        elif result == 1:  # Timeout
+            raise TimeoutError(
+                "Command does not return, resulting in a timeout.")
+        else:  # Unknown
+            raise Exception(
+                "Unknown Error with starting execute queue commands")
+
+
+class _AbstractConnectionService(Service):
+    """接続に関するコマンド"""
     def __init__(self, server: DobotServer):
         self.server = server
 
 
-class DobotSearcher(AbstractDobotService):
+class DobotSearcher(_AbstractConnectionService):
     """接続可能な Dobot を検索するコマンド"""
-    MAX_LEN = 128
+    MAX_STR_LEN = 128
+    COMMAND = DobotServer.Lib.SearchDobot
 
     def __call__(self) -> List[str]:
         """接続可能な Dobot を検索する"""
-        buf_result = create_string_buffer(self.MAX_LEN)
-        num = self.server.Lib.SearchDobot(buf_result, self.MAX_LEN)
+        buf_result = create_string_buffer(self.MAX_STR_LEN)
+        num = self.COMMAND(buf_result, self.MAX_STR_LEN)
         if num == 0:
             return []
         return buf_result.value.decode("utf-8").split(' ')
 
 
-class DobotConnector(AbstractDobotService):
+class DobotConnector(_AbstractConnectionService):
     """Dobot と接続するためのコマンド"""
     MAX_STR_LEN = 128
+    COMMAND = DobotServer.Lib.ConnectDobot
 
     def __init__(self, server: DobotServer, default_port: str = "", *,
                  encode_type: str = "utf-8", baud_rate: int = 115200):
@@ -107,8 +151,7 @@ class DobotConnector(AbstractDobotService):
         fw_type = create_string_buffer(self.MAX_STR_LEN)
         version = create_string_buffer(self.MAX_STR_LEN)
 
-        result = self.server.Lib.ConnectDobot(
-            port_name, self.baud_rate, fw_type, version)
+        result = self.COMMAND(port_name, self.baud_rate, fw_type, version)
 
         if result == 0:  # No Error
             self.server._is_connected = True
@@ -124,11 +167,11 @@ class DobotConnector(AbstractDobotService):
         elif result == 2:  # Occupied
             raise ConnectionError(
                 "Dobot interface is occupied or unavailable.")
-        else:
+        else:  # Unknown
             raise ConnectionError("Unknown Error with connecting Dobot")
 
 
-class DobotDisconnector(AbstractDobotService):
+class DobotDisconnector(_AbstractConnectionService):
     """切断するためのコマンド"""
     def __call__(self) -> None:
         """切断"""
