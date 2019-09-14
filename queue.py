@@ -18,12 +18,12 @@ class QueueServer(AbstractDobotServer):
         """現在 Queue がコマンドを実行する状態か否か"""
         return self._is_executing
 
-    def start(self):
+    def start_exec(self):
         """Queue を実行状態にする"""
         self._start()
         self._is_executing = True
 
-    def stop(self):
+    def stop_exec(self):
         """Queue を停止状態にする"""
         self._stop()
         self._is_executing = False
@@ -40,6 +40,32 @@ class QueueServer(AbstractDobotServer):
             cmd_idx: コマンド送信時の返り値で得られるコマンドのインデックス値。
         """
         return cmd_idx >= self.get_cur_idx()
+
+
+class AbstractDobotQueueService(AbstractDobotService):
+    @staticmethod
+    def _check_result(result):
+        """Queue コマンド向けのエラー解析
+
+        Raises:
+            DobotBufferError
+            TimeoutError
+            Exception: 公式ドキュメントに記載されていない未知のエラー。
+        """
+        if result == 0:  # No Error
+            return None
+        elif result == 1:  # Buffer Full
+            raise DobotBufferError("The command queue of Dobot is full.")
+        elif result == 2:  # Timeout
+            raise TimeoutError(
+                "Command does not return, resulting in a timeout.")
+        else:  # Unknown
+            raise Exception(
+                "Unknown Error with starting execute queue commands")
+
+
+class DobotBufferError(Exception):
+    pass
 
 
 class _AbstractQueueService(AbstractDobotService):
@@ -60,7 +86,7 @@ class StopExecute(_AbstractQueueService):
 
 class ForceStop(_AbstractQueueService):
     """Queue を緊急停止"""
-    COMMAND = DobotServer.SetQueuedCmdForceStopExec
+    COMMAND = DobotServer.Lib.SetQueuedCmdForceStopExec
 
 
 class ClearQueue(_AbstractQueueService):

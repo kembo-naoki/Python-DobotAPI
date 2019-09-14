@@ -27,7 +27,7 @@ class DobotServer(Server):
         return self._is_connected
 
     # with 文のサポート
-    def __enter__(self, port: Optional(str) = None) -> 'DobotServer':
+    def __enter__(self, port: Optional[str] = None) -> 'DobotServer':
         self.connect(port)
         return self
 
@@ -56,6 +56,8 @@ class AbstractDobotService(Service):
     Attributes:
         COMMAND(DobotServer.Lib._FuncPtr): コマンド本体
     """
+    COMMAND = lambda : None
+
     @abstractmethod
     def __init__(self):
         pass
@@ -74,7 +76,8 @@ class AbstractDobotService(Service):
         if not self.server.dobot.is_started():
             raise RuntimeError("Dobot has not been connected.")
 
-    def _check_result(self, result):
+    @staticmethod
+    def _check_result(result):
         """返り値に応じて適切なエラーを raise する
 
         Raises:
@@ -132,7 +135,7 @@ class DobotConnector(_AbstractConnectionService):
         self.baud_rate = baud_rate
         self.encode_type = encode_type
 
-    def __call__(self, port: Optional(str) = None) -> dict:
+    def __call__(self, port: Optional[str] = None) -> dict:
         """接続し、ファームウェアの種類とバージョンを返す
 
         Args:
