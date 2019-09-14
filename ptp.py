@@ -1,99 +1,140 @@
 from enum import Enum
 from ctypes import (Structure, byref, c_float, c_byte)
-from typing import (List, Tuple, Dict, Union, SupportsFloat)
+from typing import (List, Tuple, Dict, Union, Optional)
 
-from .base import (API, DobotClient, setting_method, DobotCommand)
-from .coordinate import (convert_coord, Coordinate,
-                         CartesianCoordinateSystem, JointCoordinateSystem)
+from .base import (DobotServer, AbstractDobotServer, AbstractDobotService)
+from .queue import (QueueServer, AbstractDobotQueueService)
+from .coordinate import (CartCoord, JointCoord)
 
 
-class MovementController(DobotCommand):
-    """ アームの特定座標から特定座標への基本的な動きを司るクラス """
-    class _PTPMode(Enum):
-        JUMP_XYZ = 0
-        MOVJ_XYZ = 1
-        MOVL_XYZ = 2
-        JUMP_ANGLE = 3
-        MOVJ_ANGLE = 4
-        MOVL_ANGLE = 5
-        MOVJ_INC = 6
-        MOVL_INC = 7
-        MOVJ_XYZ_INC = 8
-        JUMP_MOVL_XYZ = 9
+class PointToPointMovementServer(AbstractDobotServer):
+    """Dobot のアームを2点間移動させるための機能群"""
+    DEF_JOINT_PRMS = {
+        "vel": JointCoord(320, 320, 320, 320),
+        "acc": JointCoord(160, 160, 160, 320)
+    }
+    
+    def __init__(self, queue: QueueServer):
+        self.queue = queue
 
-    class RouteMode(Enum):
-        REGARDLESS = 0
-        LINEAR = 1
-        JUMP = 2
+        self._set_joint_prms = SettingJointParamService(self)
+        self.joint_prms = {"vel": None, "acc": None}
+    
+    def set_default_setting(self, mode: CoordSystem = "Cart") -> None:
+        """動作用の設定を適当な初期値にセット
 
-    class CoordinateSystem(Enum):
-        Cartesian = 0
-        Joint = 1
-
-    MODE_LIST = [
-        [
-            {
-                RouteMode.REGARDLESS: _PTPMode.MOVJ_ANGLE,
-                RouteMode.LINEAR:     _PTPMode.MOVL_ANGLE,
-                RouteMode.JUMP:       _PTPMode.JUMP_ANGLE
-            }, {
-                RouteMode.REGARDLESS: _PTPMode.MOVJ_INC,
-                RouteMode.LINEAR:
-                    ValueError("You can't use `RouteMode.LINEAR` "
-                               "and increment mode with `JointCoordinate`."),
-                RouteMode.JUMP:
-                    ValueError("You can't use `RouteMode.JUMP` "
-                               "and increment mode with `JointCoordinate`.")
-            }
-        ], [
-            {
-                RouteMode.REGARDLESS: _PTPMode.MOVJ_XYZ,
-                RouteMode.LINEAR:     _PTPMode.MOVL_XYZ,
-                RouteMode.JUMP:       _PTPMode.JUMP_XYZ
-            }, {
-                RouteMode.REGARDLESS: _PTPMode.MOVJ_XYZ_INC,
-                RouteMode.LINEAR:     _PTPMode.MOVL_INC,
-                RouteMode.JUMP:       _PTPMode.JUMP_MOVL_XYZ
-            }
-        ]
-    ]
-
-    def __init__(self, dobot: DobotClient):
-        super().__init__(dobot)
-        self.set_mode()
-
-    @setting_method
-    def set_joint_prms(self, vel: List[SupportsFloat],
-                       acc: List[SupportsFloat], *, imm: bool = False):
-        """ モーター毎の速度加速度の設定
-
-        vel
-            J1, J2, J3, J4 の各モーターの最高速度。単位はmm/s(0-500)
-        acc
-            J1, J2, J3, J4 の各モーターの加速度。単位はmm/s(0-500)
+        初期値はクラス変数 DEF_JOINT_PRMS, DEF_CART_PRMS, DEF_COM_RATIO
+        に格納されている。
+        Args:
+            mode: "Cart"または"Joint"
         """
-        param = PTPJointParams()
-        param.joint1Velocity = vel[0]
-        param.joint2Velocity = vel[1]
-        param.joint3Velocity = vel[2]
-        param.joint4Velocity = vel[3]
-        param.joint1Acceleration = acc[0]
-        param.joint2Acceleration = acc[1]
-        param.joint3Acceleration = acc[2]
-        param.joint4Acceleration = acc[3]
-        self.dobot.queue.send(
-            API.SetMoveControllerJointParams, (byref(param),), imm=imm)
+        mode = mode.lower()
+        if mode == "cart":
+            pass
+        if mode == "joint":
+            self.set_joint_prms(**self.DEF_JOINT_PRMS)
 
+    def set_joint_prms(self, vel: JointCoord, acc: JointCoord,
+                       *, imm: bool = False) -> int:
+        result = self._set_joint_prms(vel, acc, imm=imm)
+        self.joint_prms["vel"] = result["vel"]
+        self.joint_prms["acc"] = result["acc"]
+        return result["cmd_idx"]
+
+
+class _PTPMode(Enum):
+    JUMP_XYZ = 0
+    MOVJ_XYZ = 1
+    MOVL_XYZ = 2
+    JUMP_ANGLE = 3
+    MOVJ_ANGLE = 4
+    MOVL_ANGLE = 5
+    MOVJ_INC = 6
+    MOVL_INC = 7
+    MOVJ_XYZ_INC = 8
+    JUMP_MOVL_XYZ = 9
+
+
+class RouteMode(Enum):
+    REGARDLESS = 0
+    LINEAR = 1
+    JUMP = 2
+
+
+class CoordSystem(Enum):
+    Cart = 0
+    Joint = 1
+
+MODE_LIST = {
+    CoordSystem.Cart: {
+        RouteMode.REGARDLESS: [_PTPMode.MOVJ_XYZ, _PTPMode.MOVJ_XYZ_INC ],
+        RouteMode.LINEAR:     [_PTPMode.MOVL_XYZ, _PTPMode.MOVL_INC     ],
+        RouteMode.JUMP:       [_PTPMode.JUMP_XYZ, _PTPMode.JUMP_MOVL_XYZ]
+    },
+    CoordSystem.Joint: {
+        RouteMode.REGARDLESS: [_PTPMode.MOVJ_ANGLE, _PTPMode.MOVJ_ANGLE],
+        RouteMode.LINEAR: [_PTPMode.MOVL_ANGLE,
+            ValueError("You can't use `RouteMode.LINEAR` "
+                        "and increment mode with `JointCoordinate`.")],
+        RouteMode.JUMP: [_PTPMode.JUMP_ANGLE,
+            ValueError("You can't use `RouteMode.JUMP` "
+                        "and increment mode with `JointCoordinate`.")]
+    }
+}
+
+
+class _AbstractPTPService(AbstractDobotService):
+    """PTP 関連のコマンドの内、Queue を使用しないもの"""
+    def __init__(self, server: PointToPointMovementServer):
+        self.server = server
+
+
+class _AbstractPTPServiceQ(_AbstractPTPService, AbstractDobotQueueService):
+    """PTP 関連のコマンドの内、Queue を使用するもの"""
+    pass
+
+
+class C_JointParams(Structure):
+    _fields_ = [
+        ("joint1Velocity", c_float),
+        ("joint2Velocity", c_float),
+        ("joint3Velocity", c_float),
+        ("joint4Velocity", c_float),
+        ("joint1Acceleration", c_float),
+        ("joint2Acceleration", c_float),
+        ("joint3Acceleration", c_float),
+        ("joint4Acceleration", c_float)]
+
+
+class SettingJointParamService(_AbstractPTPServiceQ):
+    """アーム移動コマンドの Joint 座標系用の動作設定をするコマンド"""
+    COMMAND = DobotServer.Lib.SetMoveControllerJointParams
+
+    def __call__(self, vel: JointCoord, acc: JointCoord,
+                 *, imm: bool = False) -> dict:
+        """アーム移動コマンドの Joint 座標系用の動作設定
+        
+        Args:
+            vel: 各関節の最大速度(°/s)(0-320)
+            acc: 各関節の加速度(°/s^2)(0-?)
+            imm: このコマンドをキューに積まず、即時実行したい場合のみ True
+        """
+        params = C_JointParams(*vel.values(), *acc.values())
+        index = self._send_cmd(params)
+        return {
+            "cmd_idx": index,
+            "vel": vel, "acc": acc
+        }
+
+"""
     @setting_method
     def set_common_ratio(self, vel: SupportsFloat,
                          acc: SupportsFloat, *, imm: bool = False):
-        """ 速度と加速度の倍率設定
 
         vel
             速度の倍率。(0%-100%)
         acc
             加速度の倍率。(0%-100%)
-        """
         param = PTPCommonParams()
         param.velocityRatio = vel
         param.accelerationRatio = acc
@@ -103,7 +144,6 @@ class MovementController(DobotCommand):
     @setting_method
     def set_mode(self, cartesian: bool = True, increment: bool = False,
                  route: RouteMode = RouteMode.REGARDLESS):
-        """ Dobot の移動先の指定方法や経路を設定します。 """
         self._mode = (cartesian, increment, route)\
             # type: Tuple[bool, bool, MovementController.RouteMode]
 
@@ -117,7 +157,6 @@ class MovementController(DobotCommand):
 
     def exec(self, dest: Union[Coordinate, Dict[str, SupportsFloat]], *,
              imm: bool = False):
-        """ アームを特定の座標まで経路を選択して動かす。 """
         dest = convert_coord(dest, self._mode[1])
 
         just_cart = self._mode[0] and isinstance(
@@ -166,3 +205,4 @@ class PTPCmd(Structure):
         ("y", c_float),
         ("z", c_float),
         ("rHead", c_float)]
+"""
