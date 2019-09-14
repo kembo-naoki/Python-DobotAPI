@@ -1,4 +1,4 @@
-from ctypes import (byref, c_uint64)
+from ctypes import (byref, c_bool, c_uint64, Structure)
 
 from .base import (DobotServer, AbstractDobotServer, AbstractDobotService)
 
@@ -62,6 +62,14 @@ class AbstractDobotQueueService(AbstractDobotService):
         else:  # Unknown
             raise Exception(
                 "Unknown Error with starting execute queue commands")
+    
+    def _send_cmd(self, *params: Structure, imm: bool = False) -> int:
+        self._check_connection()
+        index = c_uint64(0)
+        result = self.COMMAND(*(byref(p) for p in params),
+                              c_bool(not imm), byref(index))
+        self._check_result(result)
+        return index
 
 
 class DobotBufferError(Exception):
