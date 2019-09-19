@@ -1,6 +1,5 @@
 from enum import Enum
 from ctypes import (Structure, byref, c_float, c_byte)
-from typing import (List, Tuple, Dict, Union, Optional)
 
 from .base import (DobotServer, AbstractDobotServer, AbstractDobotService)
 from .queue import (QueueServer, AbstractDobotQueueService)
@@ -13,14 +12,14 @@ class PointToPointMovementServer(AbstractDobotServer):
         "vel": JointCoord(320, 320, 320, 320),
         "acc": JointCoord(160, 160, 160, 320)
     }
-    
+
     def __init__(self, queue: QueueServer):
         self.queue = queue
 
         self._set_joint_prms = SettingJointParamService(self)
         self.joint_prms = {"vel": None, "acc": None}
-    
-    def set_default_setting(self, mode: CoordSystem = "Cart") -> None:
+
+    def set_default_setting(self, mode: str = "Cart") -> None:
         """動作用の設定を適当な初期値にセット
 
         初期値はクラス変数 DEF_JOINT_PRMS, DEF_CART_PRMS, DEF_COM_RATIO
@@ -65,6 +64,7 @@ class CoordSystem(Enum):
     Cart = 0
     Joint = 1
 
+
 MODE_LIST = {
     CoordSystem.Cart: {
         RouteMode.REGARDLESS: [_PTPMode.MOVJ_XYZ, _PTPMode.MOVJ_XYZ_INC ],
@@ -73,12 +73,16 @@ MODE_LIST = {
     },
     CoordSystem.Joint: {
         RouteMode.REGARDLESS: [_PTPMode.MOVJ_ANGLE, _PTPMode.MOVJ_ANGLE],
-        RouteMode.LINEAR: [_PTPMode.MOVL_ANGLE,
+        RouteMode.LINEAR: [
+            _PTPMode.MOVL_ANGLE,
             ValueError("You can't use `RouteMode.LINEAR` "
-                        "and increment mode with `JointCoordinate`.")],
-        RouteMode.JUMP: [_PTPMode.JUMP_ANGLE,
+                       "and increment mode with `JointCoord`.")
+        ],
+        RouteMode.JUMP: [
+            _PTPMode.JUMP_ANGLE,
             ValueError("You can't use `RouteMode.JUMP` "
-                        "and increment mode with `JointCoordinate`.")]
+                       "and increment mode with `JointCoord`.")
+        ]
     }
 }
 
@@ -113,7 +117,7 @@ class SettingJointParamService(_AbstractPTPServiceQ):
     def __call__(self, vel: JointCoord, acc: JointCoord,
                  *, imm: bool = False) -> dict:
         """アーム移動コマンドの Joint 座標系用の動作設定
-        
+
         Args:
             vel: 各関節の最大速度(°/s)(0-320)
             acc: 各関節の加速度(°/s^2)(0-?)
@@ -125,6 +129,7 @@ class SettingJointParamService(_AbstractPTPServiceQ):
             "cmd_idx": index,
             "vel": vel, "acc": acc
         }
+
 
 """
     @setting_method

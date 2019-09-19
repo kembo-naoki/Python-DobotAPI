@@ -62,7 +62,7 @@ class AbstractDobotQueueService(AbstractDobotService):
         else:  # Unknown
             raise Exception(
                 "Unknown Error with starting execute queue commands")
-    
+
     def _send_cmd(self, *params: Structure, imm: bool = False) -> int:
         self._check_connection()
         index = c_uint64(0)
